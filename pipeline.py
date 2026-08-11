@@ -28,8 +28,9 @@ def find_qgis_setup(case_folder):
     return result
 
 
-def run_export(case: survey.CaseData, parcel_keys, date_str, hist_dir, qgz_path, log=print):
+def run_export(case: survey.CaseData, parcel_keys, date_str, hist_dir, qgz_path, log=print, include_refs=True):
     """執行匯出。parcel_keys=None 表示全部輸出；否則為 [(sec,m,c), ...] 地號清單（可多選）。
+    include_refs 控制補點/参考點/参考線是否輸出（不受地號篩選影響，全有或全無）。
 
     - 若指定地號但地號不存在，呼叫端應在呼叫前已用 find_parcel_by_label 驗證並中止，
       本函式仍會在任一 key 不在 case.parcel_rings 時拋出例外作為最後防線。
@@ -40,7 +41,7 @@ def run_export(case: survey.CaseData, parcel_keys, date_str, hist_dir, qgz_path,
         if missing:
             raise survey.ParcelNotFoundError(f'地號 {missing} 不存在於案件資料中')
 
-    layers = survey.build_layers(case, parcel_keys=parcel_keys)
+    layers = survey.build_layers(case, parcel_keys=parcel_keys, include_refs=include_refs)
     total_rows = sum(len(l['rows']) for l in layers)
     if total_rows == 0:
         scope = '所選地號' if parcel_keys is not None else '此案件'

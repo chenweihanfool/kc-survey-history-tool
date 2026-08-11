@@ -31,6 +31,7 @@ class App(tk.Tk):
         self.date_var = tk.StringVar(value=date.today().isoformat())
         self.scope_var = tk.StringVar(value='all')
         self.parcel_query_var = tk.StringVar()
+        self.include_refs_var = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar(value='請先選擇複丈案件資料夾')
 
         self._log_queue = queue.Queue()
@@ -93,6 +94,13 @@ class App(tk.Tk):
                          command=self._on_scope_change).pack(side='left')
         ttk.Radiobutton(row3, text='指定地號', variable=self.scope_var, value='one',
                          command=self._on_scope_change).pack(side='left', padx=(20, 0))
+
+        row3b = ttk.Frame(step3)
+        row3b.pack(fill='x', padx=8, pady=(0, 4))
+        ttk.Checkbutton(
+            row3b, text='包含補點／参考點／参考線（不受地號篩選影響，全部輸出或完全不輸出）',
+            variable=self.include_refs_var,
+        ).pack(side='left')
 
         self.parcel_frame = ttk.Frame(step3)
         self.parcel_frame.pack(fill='x', padx=8, pady=(4, 8))
@@ -342,17 +350,20 @@ class App(tk.Tk):
         if not proceed:
             return
 
+        include_refs = self.include_refs_var.get()
+
         self.btn_run.configure(state='disabled')
         self.status_var.set('輸出中…')
         threading.Thread(
             target=self._run_export_thread,
-            args=(parcel_keys, date_str, hist_dir, qgz_path),
+            args=(parcel_keys, date_str, hist_dir, qgz_path, include_refs),
             daemon=True,
         ).start()
 
-    def _run_export_thread(self, parcel_keys, date_str, hist_dir, qgz_path):
+    def _run_export_thread(self, parcel_keys, date_str, hist_dir, qgz_path, include_refs):
         try:
-            result = pipeline.run_export(self.case, parcel_keys, date_str, hist_dir, qgz_path, log=self.log)
+            result = pipeline.run_export(self.case, parcel_keys, date_str, hist_dir, qgz_path,
+                                          log=self.log, include_refs=include_refs)
         except pipeline.ExportAbortedError as e:
             self.log(f'❌ 已中止：{e}')
             self.after(0, lambda: messagebox.showwarning('已中止輸出', str(e)))

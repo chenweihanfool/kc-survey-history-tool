@@ -250,10 +250,13 @@ def _lookup_ref_point(case: CaseData, key_str):
     return case.main_pts.get(str(v))
 
 
-def build_layers(case: CaseData, parcel_keys=None):
+def build_layers(case: CaseData, parcel_keys=None, include_refs=True):
     """建立圖層定義清單（供 gpkg_writer.build_gpkg 使用）。
     parcel_keys=None 表示輸出全部；否則為 [(sec,m,c), ...]，
     僅輸出與這些地號相關之點/線，以及這些地號的宗地面。
+    include_refs 控制補點/参考點/参考線：這三種類型不考慮地號關聯性，
+    只有「全部輸出」（include_refs=True，預設）或「完全不輸出」（False）兩種選擇，
+    不受 parcel_keys 篩選影響。
     """
     filter_ids = None
     key_set = None
@@ -285,38 +288,37 @@ def build_layers(case: CaseData, parcel_keys=None):
         'rows': pt_rows,
     })
 
-    # 參考點
+    # 參考點（不考慮地號關聯，僅由 include_refs 控制全有或全無）
     sub_rows_out = []
-    for sub_key, (x, y) in case.sub_pts.items():
-        base = sub_key.split('.')[0]
-        if filter_ids is not None and base not in filter_ids:
-            continue
-        r = case.sub_rows.get(sub_key, {})
-        sub_rows_out.append({
-            'geom': wkb_point(x, y),
-            '_bbox': (x, y, x, y),
-            'PT_ID': sub_key, 'COT_Y': y, 'COT_X': x,
-            'COT_SOURCE': _to_int(r.get('COT_SOURCE')),
-        })
+    if include_refs:
+        for sub_key, (x, y) in case.sub_pts.items():
+            r = case.sub_rows.get(sub_key, {})
+            sub_rows_out.append({
+                'geom': wkb_point(x, y),
+                '_bbox': (x, y, x, y),
+                'PT_ID': sub_key, 'COT_Y': y, 'COT_X': x,
+                'COT_SOURCE': _to_int(r.get('COT_SOURCE')),
+            })
     layers.append({
         'name': '參考點', 'geom_type': 'POINT',
         'attrs': [('PT_ID', 'TEXT'), ('COT_Y', 'REAL'), ('COT_X', 'REAL'), ('COT_SOURCE', 'INTEGER')],
         'rows': sub_rows_out,
     })
 
-    # 補點（無地號歸屬，兩種模式皆全部輸出）
+    # 補點（無地號歸屬，僅由 include_refs 控制全有或全無）
     supp_rows = []
-    for r in case.supplements:
-        x, y = _to_float(r.get('CTL_X')), _to_float(r.get('CTL_Y'))
-        name = (r.get('CTL_NAME') or '').strip()
-        if x is None or y is None or not name:
-            continue
-        supp_rows.append({
-            'geom': wkb_point(x, y),
-            '_bbox': (x, y, x, y),
-            'CTL_NAME': name, 'CTL_Y': y, 'CTL_X': x,
-            'CTL_LEVEL': (r.get('CTL_LEVEL') or '').strip(),
-        })
+    if include_refs:
+        for r in case.supplements:
+            x, y = _to_float(r.get('CTL_X')), _to_float(r.get('CTL_Y'))
+            name = (r.get('CTL_NAME') or '').strip()
+            if x is None or y is None or not name:
+                continue
+            supp_rows.append({
+                'geom': wkb_point(x, y),
+                '_bbox': (x, y, x, y),
+                'CTL_NAME': name, 'CTL_Y': y, 'CTL_X': x,
+                'CTL_LEVEL': (r.get('CTL_LEVEL') or '').strip(),
+            })
     layers.append({
         'name': '補點', 'geom_type': 'POINT',
         'attrs': [('CTL_NAME', 'TEXT'), ('CTL_Y', 'REAL'), ('CTL_X', 'REAL'), ('CTL_LEVEL', 'TEXT')],
@@ -368,33 +370,29 @@ def build_layers(case: CaseData, parcel_keys=None):
             'rows': rows,
         })
 
-    # 參考線
+    # 參考線（不考慮地號關聯，僅由 include_refs 控制全有或全無）
     ref_rows = []
-    for r in case.ref_lines:
-        top = _lookup_ref_point(case, r.get('LIN_TOP'))
-        bot = _lookup_ref_point(case, r.get('LIN_BOT'))
-        if not top or not bot:
-            continue
-        top_key = (r.get('LIN_TOP') or '').strip()
-        bot_key = (r.get('LIN_BOT') or '').strip()
-        if filter_ids is not None:
-            top_base = top_key.split('.')[0]
-            bot_base = bot_key.split('.')[0]
-            if top_base not in filter_ids and bot_base not in filter_ids:
+    if include_refs:
+        for r in case.ref_lines:
+            top = _lookup_ref_point(case, r.get('LIN_TOP'))
+            bot = _lookup_ref_point(case, r.get('LIN_BOT'))
+            if not top or not bot:
                 continue
-        pts = [top, bot]
-        mid_key = (r.get('LIN_MID') or '').strip()
-        if mid_key and mid_key != '0':
-            mid = _lookup_ref_point(case, mid_key)
-            if mid:
-                pts = [top, mid, bot]
-        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
-        ref_rows.append({
-            'geom': wkb_linestring(pts),
-            '_bbox': (min(xs), min(ys), max(xs), max(ys)),
-            'L_TOP': top_key, 'L_BOT': bot_key,
-            'LIN_MODE': _to_int(r.get('LIN_MODE')),
-        })
+            top_key = (r.get('LIN_TOP') or '').strip()
+            bot_key = (r.get('LIN_BOT') or '').strip()
+            pts = [top, bot]
+            mid_key = (r.get('LIN_MID') or '').strip()
+            if mid_key and mid_key != '0':
+                mid = _lookup_ref_point(case, mid_key)
+                if mid:
+                    pts = [top, mid, bot]
+            xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+            ref_rows.append({
+                'geom': wkb_linestring(pts),
+                '_bbox': (min(xs), min(ys), max(xs), max(ys)),
+                'L_TOP': top_key, 'L_BOT': bot_key,
+                'LIN_MODE': _to_int(r.get('LIN_MODE')),
+            })
     layers.append({
         'name': '參考線', 'geom_type': 'LINESTRING',
         'attrs': [('L_TOP', 'TEXT'), ('L_BOT', 'TEXT'), ('LIN_MODE', 'INTEGER')],
