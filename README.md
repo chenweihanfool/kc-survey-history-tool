@@ -20,6 +20,16 @@ GeoPackage，輸出到相鄰 `QGIS\複丈歷史\` 資料夾，並自動更新 QG
    - 在 `QGIS\複丈歷史\` 產生 `{案號}_{日期}.gpkg`
    - 備份原 QGZ 專案檔為 `.bak`，並將新圖層掛入「複丈歷史」>「{案號} ({日期})」群組
 
+## 自動更新
+
+程式每次啟動時會在背景檢查 [GitHub Releases](https://github.com/chenweihanfool/kc-survey-history-tool/releases)
+是否有新版本。若發現更新：下載新版 exe → 顯示「即將重新啟動」→ 自動以新版覆蓋目前執行檔並重啟，全程不需手動確認。
+
+- 檢查失敗（沒有網路等）會安靜略過，照常開啟目前版本，不會卡住。
+- 僅打包為 exe 執行時才會自我更新；以原始碼 `python main.py` 執行只會記錄有新版可用。
+- 發布新版：在 [version.py](version.py) 調整 `APP_VERSION`，打包後以該版本號建立 GitHub Release
+  並附上 exe 檔案即可（release 的 `.exe` 附件檔名不影響更新邏輯，只要副檔名是 `.exe` 且是該 release 下第一個即可）。
+
 ## 資料夾結構假設
 
 ```
