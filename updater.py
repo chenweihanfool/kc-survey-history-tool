@@ -101,11 +101,12 @@ def apply_self_update(new_exe_path):
     with open(ps1_path, 'w', encoding='utf-8-sig') as f:
         f.write(script)
 
-    creationflags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+    # 注意：DETACHED_PROCESS 會讓 powershell.exe 因缺少 console 而無法正常啟動/執行腳本
+    # （實測會直接以 exit code 0 結束但完全不執行腳本內容）。CREATE_NO_WINDOW 才是
+    # 正確用法：保留 console 但不顯示視窗，腳本才會確實執行。
     subprocess.Popen(
         ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1_path],
-        creationflags=creationflags,
-        close_fds=True,
+        creationflags=subprocess.CREATE_NO_WINDOW,
     )
     return True
 
