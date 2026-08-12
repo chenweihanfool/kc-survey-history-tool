@@ -21,13 +21,14 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f'{APP_TITLE} v{APP_VERSION}')
-        self.geometry('720x680')
-        self.minsize(680, 600)
+        self.geometry('720x860')
+        self.minsize(680, 760)
 
         self.case = None
         self.case_folder = None
         self.setup_info = None
         self.qgz_path_var = tk.StringVar()
+        self.qgz_display_var = tk.StringVar()
         self.date_var = tk.StringVar(value=date.today().isoformat())
         self.scope_var = tk.StringVar(value='all')
         self.parcel_query_var = tk.StringVar()
@@ -75,7 +76,7 @@ class App(tk.Tk):
         step1b = ttk.Frame(step1)
         step1b.pack(fill='x', padx=8, pady=(0, 8))
         ttk.Label(step1b, text='QGIS 專案檔（複丈歷史群組將寫入此檔）：').pack(side='left')
-        self.qgz_combo = ttk.Combobox(step1b, textvariable=self.qgz_path_var, state='readonly', width=40)
+        self.qgz_combo = ttk.Combobox(step1b, textvariable=self.qgz_display_var, state='readonly', width=40)
         self.qgz_combo.pack(side='left', padx=6)
         ttk.Button(step1b, text='另選檔案…', command=self.pick_qgz_manually).pack(side='left')
 
@@ -225,10 +226,12 @@ class App(tk.Tk):
                 detect_lines.append('⚠ 該資料夾內找不到 .qgz 專案檔，請手動選擇，或留空僅輸出 GPKG')
                 self.qgz_combo.configure(values=[], state='readonly')
                 self.qgz_path_var.set('')
+                self.qgz_display_var.set('')
         else:
             detect_lines.append('⚠ 找不到相鄰的 QGIS 資料夾，請手動選擇 QGZ 專案檔，或留空僅輸出 GPKG')
             self.qgz_combo.configure(values=[], state='readonly')
             self.qgz_path_var.set('')
+            self.qgz_display_var.set('')
 
         self.lbl_detect.configure(text='\n'.join(detect_lines))
         self.status_var.set('已讀取案件資料，可設定輸出範圍後執行')
