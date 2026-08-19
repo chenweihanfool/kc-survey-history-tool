@@ -14,7 +14,7 @@ from tkinter import ttk, filedialog, messagebox
 import survey
 import pipeline
 import updater
-from version import APP_TITLE, APP_VERSION
+from version import APP_TITLE, APP_VERSION, CHANGELOG
 
 
 class App(tk.Tk):
@@ -58,9 +58,44 @@ class App(tk.Tk):
         self.destroy()
         os._exit(0)
 
+    def show_changelog(self):
+        win = tk.Toplevel(self)
+        win.title('更新歷程')
+        win.geometry('560x520')
+        win.transient(self)
+
+        frame = ttk.Frame(win)
+        frame.pack(fill='both', expand=True, padx=12, pady=12)
+
+        canvas = tk.Canvas(frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(frame, orient='vertical', command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        inner.bind('<Configure>', lambda _e: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.create_window((0, 0), window=inner, anchor='nw')
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+
+        for entry in CHANGELOG:
+            title = ttk.Label(inner, text=f"v{entry['version']}　{entry['date']}",
+                               font=('', 11, 'bold'), foreground='#1a5cb8')
+            title.pack(anchor='w', pady=(10, 2))
+            for note in entry['notes']:
+                ttk.Label(inner, text=f'• {note}', wraplength=500, justify='left').pack(anchor='w', padx=(12, 0))
+
+        ttk.Button(win, text='關閉', command=win.destroy).pack(pady=(0, 10))
+
     # ────────────────────────────────────────────────────────────────
     def _build_ui(self):
         pad = {'padx': 10, 'pady': 6}
+
+        header = ttk.Frame(self)
+        header.pack(fill='x', padx=10, pady=(8, 0))
+        ttk.Label(header, text=APP_TITLE, font=('', 12, 'bold')).pack(side='left')
+        ver_link = ttk.Label(header, text=f'v{APP_VERSION}（點選查看更新歷程）',
+                              foreground='#1a5cb8', cursor='hand2')
+        ver_link.pack(side='left', padx=10)
+        ver_link.bind('<Button-1>', lambda _e: self.show_changelog())
 
         step1 = ttk.LabelFrame(self, text='步驟 1 — 選擇複丈案件資料夾')
         step1.pack(fill='x', **pad)
@@ -339,16 +374,19 @@ class App(tk.Tk):
             return
 
         scope_desc = f'指定地號（{len(parcel_keys)} 筆）' if parcel_keys is not None else '全部地號'
+        case_id_preview = pipeline.make_case_id(self.case.case_id, date_str)
+        gpkg_note = (f'即將把資料寫入彙整 GPKG：\n{hist_dir}\\{pipeline.MASTER_GPKG_NAME}\n'
+                     f'（案件標記：{case_id_preview}；若已有相同標記的舊資料會先取代）')
         if qgz_path:
             proceed = messagebox.askyesno(
                 '確認執行',
-                f'輸出範圍：{scope_desc}\n\n即將寫入 GPKG 至：\n{hist_dir}\n\n並修改 QGIS 專案檔：\n{qgz_path}\n'
+                f'輸出範圍：{scope_desc}\n\n{gpkg_note}\n\n並修改 QGIS 專案檔：\n{qgz_path}\n'
                 f'（會先自動備份為 .bak）\n\n確定要繼續嗎？'
             )
         else:
             proceed = messagebox.askyesno(
                 '確認執行',
-                f'輸出範圍：{scope_desc}\n\n即將寫入 GPKG 至：\n{hist_dir}\n\n（未選擇 QGZ 專案檔，僅輸出 GPKG）\n\n確定要繼續嗎？'
+                f'輸出範圍：{scope_desc}\n\n{gpkg_note}\n\n（未選擇 QGZ 專案檔，僅寫入 GPKG）\n\n確定要繼續嗎？'
             )
         if not proceed:
             return
@@ -383,7 +421,8 @@ class App(tk.Tk):
 
         self.log('✅ 完成')
         summary = '\n'.join(f'  {k}: {v} 筆' for k, v in result['layer_counts'].items())
-        msg = f"GPKG 已輸出：\n{result['gpkg_path']}\n\n圖層筆數：\n{summary}"
+        msg = (f"已寫入彙整 GPKG：\n{result['gpkg_path']}\n\n"
+               f"案件標記：{result['case_id_tag']}\n\n本次筆數：\n{summary}")
         if result['qgz_path']:
             msg += f"\n\nQGIS 專案已更新：\n{result['qgz_path']}"
         self.after(0, lambda: messagebox.showinfo('輸出完成', msg))

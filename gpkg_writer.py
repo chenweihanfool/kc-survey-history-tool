@@ -61,17 +61,11 @@ def _bounds(rows, geom_type):
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def build_gpkg(out_path, layer_defs):
-    """layer_defs: [{name, geom_type:'POINT'|'LINESTRING'|'POLYGON', attrs:[(name,sqltype)], rows:[{...}]}]
-    每個 row 需含 'geom' (bytes)；若含 '_bbox'=(minx,miny,maxx,maxy) 會用於 gpkg_contents 範圍。
-    只會寫入 rows 非空的圖層。回傳實際寫入的圖層名稱清單。
-    """
-    import os
-    if os.path.exists(out_path):
-        os.remove(out_path)
-
-    conn = sqlite3.connect(out_path)
-    cur = conn.cursor()
+def _ensure_gpkg_base(cur):
+    """若 GeoPackage 基礎結構尚未建立則建立之；已存在則略過（讓函式可重複對同一檔案呼叫）。"""
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='gpkg_spatial_ref_sys'")
+    if cur.fetchone():
+        return
     cur.execute('PRAGMA application_id = 0x47504B47')
     cur.execute('PRAGMA user_version = 10300')
 
@@ -97,6 +91,21 @@ def build_gpkg(out_path, layer_defs):
         z TINYINT NOT NULL DEFAULT 0, m TINYINT NOT NULL DEFAULT 0,
         PRIMARY KEY (table_name, column_name))''')
 
+
+def upsert_gpkg(out_path, layer_defs, case_id):
+    """開啟既有 GeoPackage（不存在則建立），把各圖層資料寫入固定名稱的資料表，用於彙整
+    多個案件到同一個持續累積的 GPKG 檔，而不是每次案件都產生新檔案／新圖層。
+
+    - 資料表不存在：建立資料表並註冊到 gpkg_contents / gpkg_geometry_columns。
+    - 資料表已存在：先刪除 CASE_ID = case_id 的舊資料（同案號重跑時取代而非累加重複），
+      再插入這次的新資料，並將 gpkg_contents 的範圍與既有範圍取聯集。
+
+    只處理 rows 非空的圖層。回傳實際寫入（新建或更新）的圖層名稱清單。
+    """
+    conn = sqlite3.connect(out_path)
+    cur = conn.cursor()
+    _ensure_gpkg_base(cur)
+
     now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
     written = []
 
@@ -106,18 +115,19 @@ def build_gpkg(out_path, layer_defs):
             continue
         name = layer['name']
         attrs = layer['attrs']
-        col_defs = ','.join(f'"{n}" {t}' for (n, t) in attrs)
-        cur.execute(f'CREATE TABLE "{name}" (fid INTEGER PRIMARY KEY AUTOINCREMENT, geom BLOB, {col_defs})')
 
-        bbox = _bounds(rows, layer['geom_type'])
-        if bbox:
-            minx, miny, maxx, maxy = bbox
-        else:
-            minx = miny = maxx = maxy = None
-        cur.execute('INSERT INTO gpkg_contents VALUES (?,?,?,?,?,?,?,?,?,?)',
-                    (name, 'features', name, name, now, minx, miny, maxx, maxy, SRS_ID))
-        cur.execute('INSERT INTO gpkg_geometry_columns VALUES (?,?,?,?,?,?)',
-                    (name, 'geom', layer['geom_type'], SRS_ID, 0, 0))
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
+        exists = cur.fetchone() is not None
+
+        if not exists:
+            col_defs = ','.join(f'"{n}" {t}' for (n, t) in attrs)
+            cur.execute(f'CREATE TABLE "{name}" (fid INTEGER PRIMARY KEY AUTOINCREMENT, geom BLOB, {col_defs})')
+            cur.execute('INSERT INTO gpkg_contents VALUES (?,?,?,?,?,?,?,?,?,?)',
+                        (name, 'features', name, name, now, None, None, None, None, SRS_ID))
+            cur.execute('INSERT INTO gpkg_geometry_columns VALUES (?,?,?,?,?,?)',
+                        (name, 'geom', layer['geom_type'], SRS_ID, 0, 0))
+        elif case_id is not None:
+            cur.execute(f'DELETE FROM "{name}" WHERE CASE_ID = ?', (case_id,))
 
         col_names = ','.join(f'"{n}"' for (n, _t) in attrs)
         placeholders = ','.join('?' for _ in attrs)
@@ -125,6 +135,17 @@ def build_gpkg(out_path, layer_defs):
         for row in rows:
             values = [row['geom']] + [row.get(n) for (n, _t) in attrs]
             cur.execute(insert_sql, values)
+
+        bbox = _bounds(rows, layer['geom_type'])
+        if bbox:
+            minx, miny, maxx, maxy = bbox
+            cur.execute('SELECT min_x, min_y, max_x, max_y FROM gpkg_contents WHERE table_name=?', (name,))
+            existing = cur.fetchone()
+            if existing and existing[0] is not None:
+                minx = min(minx, existing[0]); miny = min(miny, existing[1])
+                maxx = max(maxx, existing[2]); maxy = max(maxy, existing[3])
+            cur.execute('UPDATE gpkg_contents SET min_x=?, min_y=?, max_x=?, max_y=?, last_change=? WHERE table_name=?',
+                        (minx, miny, maxx, maxy, now, name))
 
         written.append(name)
 

@@ -250,13 +250,18 @@ def _lookup_ref_point(case: CaseData, key_str):
     return case.main_pts.get(str(v))
 
 
-def build_layers(case: CaseData, parcel_keys=None, include_refs=True):
-    """建立圖層定義清單（供 gpkg_writer.build_gpkg 使用）。
+CASE_ID_ATTR = ('CASE_ID', 'TEXT')
+
+
+def build_layers(case: CaseData, parcel_keys=None, include_refs=True, case_id_tag=None):
+    """建立圖層定義清單（供 gpkg_writer 使用）。
     parcel_keys=None 表示輸出全部；否則為 [(sec,m,c), ...]，
     僅輸出與這些地號相關之點/線，以及這些地號的宗地面。
     include_refs 控制補點/参考點/参考線：這三種類型不考慮地號關聯性，
     只有「全部輸出」（include_refs=True，預設）或「完全不輸出」（False）兩種選擇，
     不受 parcel_keys 篩選影響。
+    case_id_tag：每一筆輸出資料的 CASE_ID 屬性值（例如 'KC0395-115-08-20'），
+    用於彙整圖層裡標記資料來源案件，供之後同案號重跑時比對刪除舊資料。
     """
     filter_ids = None
     key_set = None
@@ -280,11 +285,13 @@ def build_layers(case: CaseData, parcel_keys=None, include_refs=True):
             'COT_MATTER': _to_int(r.get('COT_MATTER')),
             'COT_SOURCE': _to_int(r.get('COT_SOURCE')),
             'COT_REMARK': (r.get('COT_REMARK') or '').strip(),
+            'CASE_ID': case_id_tag,
         })
     layers.append({
         'name': '界址點', 'geom_type': 'POINT',
         'attrs': [('COT_NUMBER', 'INTEGER'), ('COT_Y', 'REAL'), ('COT_X', 'REAL'),
-                  ('COT_MATTER', 'INTEGER'), ('COT_SOURCE', 'INTEGER'), ('COT_REMARK', 'TEXT')],
+                  ('COT_MATTER', 'INTEGER'), ('COT_SOURCE', 'INTEGER'), ('COT_REMARK', 'TEXT'),
+                  CASE_ID_ATTR],
         'rows': pt_rows,
     })
 
@@ -298,10 +305,12 @@ def build_layers(case: CaseData, parcel_keys=None, include_refs=True):
                 '_bbox': (x, y, x, y),
                 'PT_ID': sub_key, 'COT_Y': y, 'COT_X': x,
                 'COT_SOURCE': _to_int(r.get('COT_SOURCE')),
+                'CASE_ID': case_id_tag,
             })
     layers.append({
         'name': '參考點', 'geom_type': 'POINT',
-        'attrs': [('PT_ID', 'TEXT'), ('COT_Y', 'REAL'), ('COT_X', 'REAL'), ('COT_SOURCE', 'INTEGER')],
+        'attrs': [('PT_ID', 'TEXT'), ('COT_Y', 'REAL'), ('COT_X', 'REAL'), ('COT_SOURCE', 'INTEGER'),
+                  CASE_ID_ATTR],
         'rows': sub_rows_out,
     })
 
@@ -318,57 +327,51 @@ def build_layers(case: CaseData, parcel_keys=None, include_refs=True):
                 '_bbox': (x, y, x, y),
                 'CTL_NAME': name, 'CTL_Y': y, 'CTL_X': x,
                 'CTL_LEVEL': (r.get('CTL_LEVEL') or '').strip(),
+                'CASE_ID': case_id_tag,
             })
     layers.append({
         'name': '補點', 'geom_type': 'POINT',
-        'attrs': [('CTL_NAME', 'TEXT'), ('CTL_Y', 'REAL'), ('CTL_X', 'REAL'), ('CTL_LEVEL', 'TEXT')],
+        'attrs': [('CTL_NAME', 'TEXT'), ('CTL_Y', 'REAL'), ('CTL_X', 'REAL'), ('CTL_LEVEL', 'TEXT'),
+                  CASE_ID_ATTR],
         'rows': supp_rows,
     })
 
-    # 地籍圖線段（依段分層）
-    sections = set()
+    # 地籍線（單一圖層，含所有段別；L_SEC/R_SEC 屬性區分段別，不再依段分層建圖層）
+    line_rows = []
     for r in case.lines:
-        for f in ('L_SECTION', 'R_SECTION'):
-            v = _to_int(r.get(f))
-            if v:
-                sections.add(v)
-    for sec in sorted(sections):
-        rows = []
-        for r in case.lines:
-            l_sec, r_sec = _to_int(r.get('L_SECTION')), _to_int(r.get('R_SECTION'))
-            if l_sec != sec and r_sec != sec:
+        l_sec, r_sec = _to_int(r.get('L_SECTION')), _to_int(r.get('R_SECTION'))
+        top_id, bot_id = _norm_key_safe(r.get('LIN_TOP')), _norm_key_safe(r.get('LIN_BOT'))
+        top, bot = case.main_pts.get(top_id), case.main_pts.get(bot_id)
+        if not top or not bot:
+            continue
+        if key_set is not None:
+            l_m, l_c = _to_int(r.get('L_PARCEL')), _to_int(r.get('L_PARCEL_E')) or 0
+            r_m, r_c = _to_int(r.get('R_PARCEL')), _to_int(r.get('R_PARCEL_E')) or 0
+            l_match = (l_sec, l_m, l_c) in key_set
+            r_match = (r_sec, r_m, r_c) in key_set
+            if not (l_match or r_match):
                 continue
-            top_id, bot_id = _norm_key_safe(r.get('LIN_TOP')), _norm_key_safe(r.get('LIN_BOT'))
-            top, bot = case.main_pts.get(top_id), case.main_pts.get(bot_id)
-            if not top or not bot:
-                continue
-            if key_set is not None:
-                l_m, l_c = _to_int(r.get('L_PARCEL')), _to_int(r.get('L_PARCEL_E')) or 0
-                r_m, r_c = _to_int(r.get('R_PARCEL')), _to_int(r.get('R_PARCEL_E')) or 0
-                l_match = (l_sec, l_m, l_c) in key_set
-                r_match = (r_sec, r_m, r_c) in key_set
-                if not (l_match or r_match):
-                    continue
-            pts = [top, bot]
-            mid_id = _norm_key_safe(r.get('LIN_MID'))
-            if mid_id and mid_id != '0':
-                mid = case.main_pts.get(mid_id)
-                if mid:
-                    pts = [top, mid, bot]
-            xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
-            rows.append({
-                'geom': wkb_linestring(pts),
-                '_bbox': (min(xs), min(ys), max(xs), max(ys)),
-                'L_SEC': l_sec, 'L_PAR': _to_int(r.get('L_PARCEL')),
-                'R_SEC': r_sec, 'R_PAR': _to_int(r.get('R_PARCEL')),
-                'LIN_MODE': _to_int(r.get('LIN_MODE')),
-            })
-        layers.append({
-            'name': f'地籍圖_S{sec}', 'geom_type': 'LINESTRING',
-            'attrs': [('L_SEC', 'INTEGER'), ('L_PAR', 'INTEGER'), ('R_SEC', 'INTEGER'),
-                      ('R_PAR', 'INTEGER'), ('LIN_MODE', 'INTEGER')],
-            'rows': rows,
+        pts = [top, bot]
+        mid_id = _norm_key_safe(r.get('LIN_MID'))
+        if mid_id and mid_id != '0':
+            mid = case.main_pts.get(mid_id)
+            if mid:
+                pts = [top, mid, bot]
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+        line_rows.append({
+            'geom': wkb_linestring(pts),
+            '_bbox': (min(xs), min(ys), max(xs), max(ys)),
+            'L_SEC': l_sec, 'L_PAR': _to_int(r.get('L_PARCEL')),
+            'R_SEC': r_sec, 'R_PAR': _to_int(r.get('R_PARCEL')),
+            'LIN_MODE': _to_int(r.get('LIN_MODE')),
+            'CASE_ID': case_id_tag,
         })
+    layers.append({
+        'name': '地籍線', 'geom_type': 'LINESTRING',
+        'attrs': [('L_SEC', 'INTEGER'), ('L_PAR', 'INTEGER'), ('R_SEC', 'INTEGER'),
+                  ('R_PAR', 'INTEGER'), ('LIN_MODE', 'INTEGER'), CASE_ID_ATTR],
+        'rows': line_rows,
+    })
 
     # 參考線（不考慮地號關聯，僅由 include_refs 控制全有或全無）
     ref_rows = []
@@ -392,10 +395,11 @@ def build_layers(case: CaseData, parcel_keys=None, include_refs=True):
                 '_bbox': (min(xs), min(ys), max(xs), max(ys)),
                 'L_TOP': top_key, 'L_BOT': bot_key,
                 'LIN_MODE': _to_int(r.get('LIN_MODE')),
+                'CASE_ID': case_id_tag,
             })
     layers.append({
         'name': '參考線', 'geom_type': 'LINESTRING',
-        'attrs': [('L_TOP', 'TEXT'), ('L_BOT', 'TEXT'), ('LIN_MODE', 'INTEGER')],
+        'attrs': [('L_TOP', 'TEXT'), ('L_BOT', 'TEXT'), ('LIN_MODE', 'INTEGER'), CASE_ID_ATTR],
         'rows': ref_rows,
     })
 
@@ -421,11 +425,12 @@ def build_layers(case: CaseData, parcel_keys=None, include_refs=True):
             'PARCEL_NO': f'{m}-{c}' if c else str(m),
             'AREA_HA': area_info.get('AREA_HA'),
             'CATE': area_info.get('CATE', ''),
+            'CASE_ID': case_id_tag,
         })
     layers.append({
         'name': '宗地', 'geom_type': 'POLYGON',
         'attrs': [('SECTION', 'INTEGER'), ('MOTHER', 'INTEGER'), ('CHILD', 'INTEGER'),
-                  ('PARCEL_NO', 'TEXT'), ('AREA_HA', 'REAL'), ('CATE', 'TEXT')],
+                  ('PARCEL_NO', 'TEXT'), ('AREA_HA', 'REAL'), ('CATE', 'TEXT'), CASE_ID_ATTR],
         'rows': par_rows,
     })
 

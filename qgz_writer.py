@@ -3,8 +3,12 @@
 QGZ 本質是 ZIP 檔，內含一個 .qgs（QGIS 專案 XML）以及可能的其他資源（如樣式資料庫）。
 本模組會：
   1. 完整保留 ZIP 內所有非 .qgs 的檔案（例如 *_styles.db），避免修改專案時遺失資源。
-  2. 解析 .qgs XML，於「複丈歷史」群組下新增／取代指定日期子群組的圖層。
-  3. 若既有專案內有同名圖層（去除案號前綴後比對類型），複製其樣式設定到新圖層。
+  2. 解析 .qgs XML，在「複丈歷史」群組下確保固定的圖層集合存在（界址點/参考點/補點/
+     地籍線/参考線/宗地），這些圖層永遠指向同一個彙整 GPKG；圖層已存在時不重建 XML
+     （資料已透過 gpkg_writer.upsert_gpkg 直接寫進同一個資料表），只有該圖層類型第一次
+     出現時才會新增 maplayer / layer-tree-layer 項目，避免每次案件輸出都讓 QGZ 多長圖層。
+  3. 新增圖層時，若既有專案內有同型圖層（去除案號前綴後比對），複製其樣式設定；否則
+     套用內建預設樣式。
   4. 保留原始 <!DOCTYPE ...> 宣告後重新壓縮回 QGZ。
 """
 import io
@@ -116,7 +120,7 @@ DEFAULT_RENDERERS = {
     '界址點': _marker_renderer('227,26,28,255', 'circle', '2.4'),
     '参考點': _marker_renderer('255,127,0,255', 'circle', '2.0'),
     '補點': _marker_renderer('31,120,180,255', 'square', '2.0'),
-    '地籍圖': _line_renderer('0,0,0,255', '0.3', 'solid'),
+    '地籍線': _line_renderer('0,0,0,255', '0.3', 'solid'),
     '参考線': _line_renderer('120,120,120,255', '0.3', 'dash'),
     '宗地': _fill_renderer('255,255,0,50'),
 }
@@ -182,8 +186,9 @@ def _new_layer_id(name):
 
 
 def _base_type_name(layername):
-    """去除案號前綴（'案號 — 類型' 格式）以及地籍圖的段代碼後綴，取得圖層類型基底名稱，供樣式比對用。
-    注意：實際圖層命名是 '地籍圖_S{段代碼}'（見 survey.build_layers），不是 '地籍圖線段_S...'。"""
+    """去除舊版命名可能殘留的案號前綴（'案號 — 類型' 格式）以及地籍圖的段代碼後綴，
+    取得圖層類型基底名稱，供樣式比對用。新版圖層本身就是固定的基底名稱（例如「界址點」），
+    這裡主要是為了在舊版留下的圖層（例如「KC1120_2026-08-12 — 界址點」）中找到可複製的樣式。"""
     if ' — ' in layername:
         layername = layername.rsplit(' — ', 1)[-1]
     m = re.match(r'^(地籍圖)_S\d+$', layername)
@@ -216,12 +221,30 @@ def _collect_style_cache(root):
     return cache
 
 
-def patch_qgs(qgs_text, group_label, layer_specs, gpkg_rel_path):
-    """在 XML 中新增圖層並掛入「複丈歷史」>「group_label」子群組。
+def _find_existing_layer_id(root, gpkg_rel_path, table_name):
+    """在專案內尋找 datasource 完全對應到指定 GPKG + 資料表的既有圖層，回傳其 id；找不到回傳 None。"""
+    proj_layers = root.find('projectlayers')
+    if proj_layers is None:
+        return None
+    target_ds = f'{gpkg_rel_path}|layername={table_name}'
+    for ml in proj_layers.findall('maplayer'):
+        ds_el = ml.find('datasource')
+        if ds_el is not None and ds_el.text == target_ds:
+            id_el = ml.find('id')
+            return id_el.text if id_el is not None else None
+    return None
+
+
+def ensure_layers(qgs_text, layer_specs, gpkg_rel_path):
+    """確保 layer_specs 內每個圖層都存在於專案的「複丈歷史」群組下，且指向同一個彙整 GPKG。
 
     layer_specs: [{'id':str, 'name':str, 'geom_type':'POINT'|'LINESTRING'|'POLYGON', 'table_name':str}]
-    gpkg_rel_path: 相對於 .qgs 的路徑，例如 './複丈歷史/KC0391_2026-08-11.gpkg'
-    回傳新的 qgs_text。
+    gpkg_rel_path: 相對於 .qgs 的路徑，例如 './複丈歷史/複丈歷史.gpkg'（固定檔名，不隨案件變動）
+
+    若專案內已有 datasource 完全相同（同一個彙整 GPKG + 同一個資料表）的圖層，就跳過不重建
+    ——資料已經透過 gpkg_writer.upsert_gpkg 直接寫進那個資料表，QGIS 重新整理圖層／重開專案
+    即可看到最新資料，不需要改動 XML。只有該圖層類型第一次出現時才會新增 maplayer /
+    layer-tree-layer 項目。回傳 (新的 qgs_text, 這次新增的圖層名稱清單)。
     """
     doctype, body = _strip_doctype(qgs_text)
     root = ET.fromstring(body)
@@ -253,17 +276,12 @@ def patch_qgs(qgs_text, group_label, layer_specs, gpkg_rel_path):
             idx = 0
         root_ltg.insert(idx, hist_grp)
 
-    # 若已存在同名日期子群組，先移除它，並清掉它對應的 maplayer（避免重跑累積孤兒圖層）
-    for g in list(hist_grp.findall('layer-tree-group')):
-        if g.get('name') == group_label:
-            old_ids = {ltl.get('id') for ltl in g.findall('layer-tree-layer') if ltl.get('id')}
-            for ml in list(proj_layers.findall('maplayer')):
-                id_el = ml.find('id')
-                if id_el is not None and id_el.text in old_ids:
-                    proj_layers.remove(ml)
-            hist_grp.remove(g)
+    newly_added = []
 
     for spec in layer_specs:
+        if _find_existing_layer_id(root, gpkg_rel_path, spec['table_name']) is not None:
+            continue  # 圖層已存在，資料已透過 GPKG upsert 更新，不需要改動 XML
+
         geom_label = GEOM_LABEL.get(spec['geom_type'], 'Point')
         ml = ET.SubElement(proj_layers, 'maplayer')
         ml.set('type', 'vector')
@@ -292,18 +310,7 @@ def patch_qgs(qgs_text, group_label, layer_specs, gpkg_rel_path):
             if default_xml:
                 ml.append(ET.fromstring(default_xml))
 
-    if proj_layers.get('layercount') is not None:
-        try:
-            cnt = int(proj_layers.get('layercount'))
-        except ValueError:
-            cnt = len(proj_layers.findall('maplayer'))
-        proj_layers.set('layercount', str(cnt + len(layer_specs)))
-
-    date_grp = ET.Element('layer-tree-group', {
-        'name': group_label, 'checked': 'Qt::Checked', 'expanded': '1', 'groupLayer': '',
-    })
-    for spec in layer_specs:
-        ltl = ET.SubElement(date_grp, 'layer-tree-layer', {
+        ltl = ET.SubElement(hist_grp, 'layer-tree-layer', {
             'providerKey': 'ogr',
             'name': spec['name'],
             'patch_size': '-1,-1',
@@ -315,26 +322,33 @@ def patch_qgs(qgs_text, group_label, layer_specs, gpkg_rel_path):
             'id': spec['id'],
         })
         ET.SubElement(ltl, 'customproperties')
-    hist_grp.insert(0, date_grp)
+
+        newly_added.append(spec['name'])
+
+    if newly_added and proj_layers.get('layercount') is not None:
+        try:
+            cnt = int(proj_layers.get('layercount'))
+        except ValueError:
+            cnt = len(proj_layers.findall('maplayer'))
+        proj_layers.set('layercount', str(cnt + len(newly_added)))
 
     new_body = ET.tostring(root, encoding='unicode')
-    if doctype:
-        return doctype + '\n' + new_body
-    return new_body
+    result = (doctype + '\n' + new_body) if doctype else new_body
+    return result, newly_added
 
 
-def build_layer_specs(layer_defs, name_prefix):
-    """由 gpkg_writer 的 layer_defs 產生 patch_qgs 所需的 layer_specs，圖層名稱格式：'{name_prefix} — {類型}'。
-    只納入實際有資料 (rows 非空) 的圖層，確保不會把空圖層寫進 QGZ。
+def build_layer_specs(layer_defs):
+    """由 gpkg_writer 的 layer_defs 產生 ensure_layers 所需的 layer_specs。
+    圖層名稱／資料表名稱直接用類型名稱（例如「界址點」），不再加案號前綴——
+    因為現在是固定的彙整圖層，非案件專屬。只納入實際有資料 (rows 非空) 的圖層。
     """
     specs = []
     for d in layer_defs:
         if not d.get('rows'):
             continue
-        display_name = f"{name_prefix} — {d['name']}"
         specs.append({
             'id': _new_layer_id(d['name']),
-            'name': display_name,
+            'name': d['name'],
             'geom_type': d['geom_type'],
             'table_name': d['name'],
         })
