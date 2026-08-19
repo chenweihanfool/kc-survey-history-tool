@@ -27,6 +27,7 @@ class App(tk.Tk):
         self.case = None
         self.case_folder = None
         self.setup_info = None
+        self.data_version_var = tk.StringVar(value='new')
         self.qgz_path_var = tk.StringVar()
         self.qgz_display_var = tk.StringVar()
         self.date_var = tk.StringVar(value=date.today().isoformat())
@@ -107,6 +108,16 @@ class App(tk.Tk):
 
         self.lbl_detect = ttk.Label(step1, text='', foreground='#2a7a3a', wraplength=660, justify='left')
         self.lbl_detect.pack(fill='x', padx=8, pady=(0, 6))
+
+        step1a = ttk.Frame(step1)
+        step1a.pack(fill='x', padx=8, pady=(0, 6))
+        ttk.Label(step1a, text='資料版本：').pack(side='left')
+        ttk.Radiobutton(step1a, text='新圖（現況，預設）', variable=self.data_version_var, value='new',
+                         command=self._on_data_version_change).pack(side='left')
+        ttk.Radiobutton(step1a, text='舊圖', variable=self.data_version_var, value='old',
+                         command=self._on_data_version_change).pack(side='left', padx=(10, 0))
+        ttk.Label(step1a, text='（新圖＝D14/D21/D13/D11，舊圖＝D2C/D2D/D2B）',
+                  foreground='#888').pack(side='left', padx=(10, 0))
 
         step1b = ttk.Frame(step1)
         step1b.pack(fill='x', padx=8, pady=(0, 8))
@@ -211,13 +222,33 @@ class App(tk.Tk):
         folder = filedialog.askdirectory(title='選擇複丈案件資料夾（例如 KC0391）')
         if not folder:
             return
+        self._start_load(folder)
+
+    def _on_data_version_change(self):
+        if not self.case_folder:
+            return  # 尚未選過資料夾，之後選資料夾時會用目前的版本設定讀取
+        use_old = self.data_version_var.get() == 'old'
+        if use_old:
+            try:
+                if not survey.has_old_map_data(self.case_folder):
+                    messagebox.showwarning(
+                        '沒有舊圖資料',
+                        '這個案件資料夾內找不到任何舊圖資料（D2B/D2C/D2D 皆無記錄），'
+                        '切換後重新讀取會是空的。'
+                    )
+            except Exception:
+                pass
+        self._start_load(self.case_folder)
+
+    def _start_load(self, folder):
         self.status_var.set('讀取中…')
         self.btn_run.configure(state='disabled')
-        threading.Thread(target=self._load_case_thread, args=(folder,), daemon=True).start()
+        use_old = self.data_version_var.get() == 'old'
+        threading.Thread(target=self._load_case_thread, args=(folder, use_old), daemon=True).start()
 
-    def _load_case_thread(self, folder):
+    def _load_case_thread(self, folder, use_old_map):
         try:
-            case = survey.load_case(folder)
+            case = survey.load_case(folder, use_old_map=use_old_map)
         except survey.CaseNotFoundError as e:
             self.after(0, lambda: messagebox.showerror('找不到案件資料', str(e)))
             self.after(0, lambda: self.status_var.set('請先選擇複丈案件資料夾'))
@@ -235,7 +266,8 @@ class App(tk.Tk):
         self.case = case
         self.setup_info = setup
 
-        self.lbl_case.configure(text=f'✓ {case.case_id}（{folder}）', foreground='#2a7a3a')
+        version_tag = '舊圖' if case.data_version == 'old' else '新圖'
+        self.lbl_case.configure(text=f'✓ {case.case_id}（{folder}）［{version_tag}］', foreground='#2a7a3a')
 
         parcels = survey.list_parcels(case)
         self._parcel_labels = [p['label'] for p in parcels]
@@ -271,13 +303,8 @@ class App(tk.Tk):
         self.lbl_detect.configure(text='\n'.join(detect_lines))
         self.status_var.set('已讀取案件資料，可設定輸出範圍後執行')
         self.btn_run.configure(state='normal')
-        self.log(f'已讀取案件：{case.case_id}（{folder}）')
-        if case.used_new_points:
-            self.log('點位採用「新」版資料（D2C）')
-        if case.used_new_lines:
-            self.log('線段採用「新」版資料（D2D）')
-        if case.used_new_rings:
-            self.log('宗地邊界採用「新」版資料（D2B）')
+        version_label = '舊圖（D2C/D2D/D2B）' if case.data_version == 'old' else '新圖（D14/D21/D13/D11）'
+        self.log(f'已讀取案件：{case.case_id}（{folder}）— 資料版本：{version_label}')
 
     def _on_qgz_pick(self, _event=None):
         name = self.qgz_combo.get()

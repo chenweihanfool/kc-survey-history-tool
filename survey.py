@@ -1,15 +1,18 @@
 """複丈案件資料處理核心邏輯：讀取 D 系列檔案 -> 建立點/線/面圖層定義。
 
-檔案對應關係（依實際 KC0391 測試資料驗證）：
+檔案對應關係（依實際案件資料驗證，並經使用者確認新舊圖對應方向）：
+  ── 新圖／現況（預設）──
   D14 = 界址點/參考點座標（COT_REF='0' 為界址點，其餘為參考點，小數點編碼）
-  D2C = 界址點/參考點座標「新」版（若有資料則優先採用，否則退回 D14）
   D21 = 地籍圖線段拓樸（含 L/R 地號）
-  D2D = 地籍圖線段拓樸「新」版（若有資料則優先採用，否則退回 D21）
+  D13 = 宗地界址點序列（每筆最多 8 個點號，同地號可跨多筆記錄接續）
+  D11 = 宗地面積/地目等屬性（依 SECTION_O + PAR_O_M/PAR_O_C 對照），僅新圖適用
+  ── 舊圖（使用者可於 GUI 切換）──
+  D2C = 界址點/參考點座標（格式同 D14）
+  D2D = 地籍圖線段拓樸（格式同 D21）
+  D2B = 宗地界址點序列（格式同 D13）
+  ── 兩者皆有（不受新舊圖切換影響）──
   D29 = 參考線（LIN_TOP/BOT/MID 為文字型態，格式如 "90.7"）
   D20 = 補點（Q 開頭補樁點，無地號歸屬）
-  D2B = 宗地界址點序列「新」版（若有資料則優先採用，否則退回 D13）
-  D13 = 宗地界址點序列（每筆最多 8 個點號，同地號可跨多筆記錄接續）
-  D11 = 宗地面積/地目等屬性（依 SECTION_O + PAR_O_M/PAR_O_C 對照）
 
 座標系統：D 系列檔案座標已是 TWD97 / TM2 zone 121 (EPSG:3826)，不需再轉換。
 """
@@ -76,74 +79,72 @@ class CaseData:
     case_id: str
     base_name: str
     folder: str
+    data_version: str = 'new'  # 'new'（D14/D21/D13/D11，預設）或 'old'（D2C/D2D/D2B，舊圖）
     main_pts: dict = field(default_factory=dict)   # "123" -> (x,y)
     sub_pts: dict = field(default_factory=dict)     # "123.4" -> (x,y)
-    main_rows: dict = field(default_factory=dict)   # "123" -> raw D14/D2C row
+    main_rows: dict = field(default_factory=dict)   # "123" -> raw row
     sub_rows: dict = field(default_factory=dict)
-    lines: list = field(default_factory=list)       # D21/D2D rows
-    ref_lines: list = field(default_factory=list)   # D29 rows
-    supplements: list = field(default_factory=list)  # D20 rows
+    lines: list = field(default_factory=list)       # D21 或 D2D rows
+    ref_lines: list = field(default_factory=list)   # D29 rows（新舊圖共用）
+    supplements: list = field(default_factory=list)  # D20 rows（新舊圖共用）
     parcel_rings: dict = field(default_factory=dict)  # (sec,m,c) -> [point_id_str,...] ordered
     parcel_areas: dict = field(default_factory=dict)  # (sec,m,c) -> {AREA_HA, CATE}
-    used_new_points: bool = False
-    used_new_lines: bool = False
-    used_new_rings: bool = False
 
 
-def load_case(folder):
+def has_old_map_data(folder):
+    """檢查案件資料夾內是否有任何舊圖資料（D2B/D2C/D2D 任一有記錄），供 GUI 決定是否
+    要提示使用者這個案件其實沒有舊圖可切換。"""
+    prefix, seg_num, base_name = detect_case(folder)
+    for ext in ('D2B', 'D2C', 'D2D'):
+        if _read_opt(folder, base_name, ext):
+            return True
+    return False
+
+
+def load_case(folder, use_old_map=False):
+    """use_old_map=False（預設）：使用 D14/D21/D13/D11（新圖／現況）。
+    use_old_map=True：使用 D2C/D2D/D2B（舊圖）；D11 面積/地目屬性僅新圖適用，
+    舊圖模式下 parcel_areas 一律為空（沒有對應的舊圖面積/地目資料）。
+    """
     prefix, seg_num, base_name = detect_case(folder)
     case_id = os.path.basename(os.path.normpath(folder))
 
-    d14 = read_dbf_records(_dbf_path(folder, base_name, 'D14'))
-    d2c = _read_opt(folder, base_name, 'D2C')
-    use_new_pts = len(d2c) > 0
+    pt_ext = 'D2C' if use_old_map else 'D14'
+    line_ext = 'D2D' if use_old_map else 'D21'
+    ring_ext = 'D2B' if use_old_map else 'D13'
+
+    pt_records = _read_opt(folder, base_name, pt_ext) if use_old_map else read_dbf_records(_dbf_path(folder, base_name, pt_ext))
 
     main_pts, sub_pts, main_rows, sub_rows = {}, {}, {}, {}
-
-    def _ingest_points(records):
-        for r in records:
-            x, y = _to_float(r.get('COT_X')), _to_float(r.get('COT_Y'))
-            if x is None or y is None:
+    for r in pt_records:
+        x, y = _to_float(r.get('COT_X')), _to_float(r.get('COT_Y'))
+        if x is None or y is None:
+            continue
+        ref = (r.get('COT_REF') or '0').strip()
+        num = r.get('COT_NUMBER')
+        if num is None or num == '':
+            continue
+        try:
+            num_key = _norm_key(num)
+        except ValueError:
+            continue
+        if ref in ('0', ''):
+            main_pts[num_key] = (x, y)
+            main_rows[num_key] = r
+        else:
+            ref_i = _to_int(ref)
+            if ref_i is None:
                 continue
-            ref = (r.get('COT_REF') or '0').strip()
-            num = r.get('COT_NUMBER')
-            if num is None or num == '':
-                continue
-            try:
-                num_key = _norm_key(num)
-            except ValueError:
-                continue
-            if ref in ('0', ''):
-                main_pts[num_key] = (x, y)
-                main_rows[num_key] = r
-            else:
-                ref_i = _to_int(ref)
-                if ref_i is None:
-                    continue
-                sub_key = f'{num_key}.{ref_i}'
-                sub_pts[sub_key] = (x, y)
-                sub_rows[sub_key] = r
+            sub_key = f'{num_key}.{ref_i}'
+            sub_pts[sub_key] = (x, y)
+            sub_rows[sub_key] = r
 
-    # 先讀 D14 當底，D2C（若有）疊加覆蓋同號點位。不能直接「有 D2C 就整個換掉 D14」——
-    # 實測發現有案件的 D2C 只含主點（COT_REF=0），不含 D14 既有的参考點/補點座標，
-    # 若整個換掉會導致 D29 参考線用小數點編碼查找端點時全部查不到、退回連到錯誤的
-    # 主點座標，畫出來的参考線會整個打結交叉（跟正確結果完全不符）。
-    _ingest_points(d14)
-    if use_new_pts:
-        _ingest_points(d2c)
-
-    d21 = read_dbf_records(_dbf_path(folder, base_name, 'D21')) if os.path.exists(_dbf_path(folder, base_name, 'D21')) else []
-    d2d = _read_opt(folder, base_name, 'D2D')
-    use_new_lines = len(d2d) > 0
-    lines = d2d if use_new_lines else d21
+    lines = _read_opt(folder, base_name, line_ext)
 
     ref_lines = _read_opt(folder, base_name, 'D29')
     supplements = _read_opt(folder, base_name, 'D20')
 
-    d13 = _read_opt(folder, base_name, 'D13')
-    d2b = _read_opt(folder, base_name, 'D2B')
-    use_new_rings = len(d2b) > 0
-    ring_records = d2b if use_new_rings else d13
+    ring_records = _read_opt(folder, base_name, ring_ext)
 
     parcel_rings = {}
     for r in ring_records:
@@ -160,25 +161,26 @@ def load_case(folder):
                 continue
             seq.append(str(pid))
 
-    d11 = _read_opt(folder, base_name, 'D11')
     parcel_areas = {}
-    for r in d11:
-        sec, m, c = _to_int(r.get('SECTION_O')), _to_int(r.get('PAR_O_M')), _to_int(r.get('PAR_O_C'))
-        if sec is None or m is None:
-            continue
-        c = c or 0
-        area_ha = _to_float(r.get('AREA_NEW')) or _to_float(r.get('AREA_OLD'))
-        parcel_areas[(sec, m, c)] = {
-            'AREA_HA': area_ha,
-            'CATE': (r.get('CATE_NEW') or r.get('CATE_OLD') or '').strip(),
-        }
+    if not use_old_map:
+        d11 = _read_opt(folder, base_name, 'D11')
+        for r in d11:
+            sec, m, c = _to_int(r.get('SECTION_O')), _to_int(r.get('PAR_O_M')), _to_int(r.get('PAR_O_C'))
+            if sec is None or m is None:
+                continue
+            c = c or 0
+            area_ha = _to_float(r.get('AREA_NEW')) or _to_float(r.get('AREA_OLD'))
+            parcel_areas[(sec, m, c)] = {
+                'AREA_HA': area_ha,
+                'CATE': (r.get('CATE_NEW') or r.get('CATE_OLD') or '').strip(),
+            }
 
     return CaseData(
         case_id=case_id, base_name=base_name, folder=folder,
+        data_version='old' if use_old_map else 'new',
         main_pts=main_pts, sub_pts=sub_pts, main_rows=main_rows, sub_rows=sub_rows,
         lines=lines, ref_lines=ref_lines, supplements=supplements,
         parcel_rings=parcel_rings, parcel_areas=parcel_areas,
-        used_new_points=use_new_pts, used_new_lines=use_new_lines, used_new_rings=use_new_rings,
     )
 
 
