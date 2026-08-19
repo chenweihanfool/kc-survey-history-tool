@@ -47,9 +47,16 @@ def to_roc_date(date_str):
     return f'{roc_year}-{month}-{day}'
 
 
-def make_case_id(case_id, date_str):
-    """案件屬性欄位值：'{案號}-{民國年}-{月}-{日}'，例如 KC0395-115-08-20。"""
-    return f'{case_id}-{to_roc_date(date_str)}'
+def make_case_id(case_id, date_str, data_version='new'):
+    """案件屬性欄位值：'{案號}-{民國年}-{月}-{日}'，例如 KC0395-115-08-20；
+    data_version='old'（舊圖）時加上 '-舊' 後綴，例如 KC0395-115-08-20-舊。
+    新舊圖是各自獨立的資料集，加後綴才能讓同一案件同一天的新圖／舊圖資料在彙整
+    GPKG 裡同時並存、不會因為 CASE_ID 相同而互相覆蓋/混入。
+    """
+    tag = f'{case_id}-{to_roc_date(date_str)}'
+    if data_version == 'old':
+        tag += '-舊'
+    return tag
 
 
 def run_export(case: survey.CaseData, parcel_keys, date_str, hist_dir, qgz_path, log=print, include_refs=True):
@@ -67,7 +74,7 @@ def run_export(case: survey.CaseData, parcel_keys, date_str, hist_dir, qgz_path,
         if missing:
             raise survey.ParcelNotFoundError(f'地號 {missing} 不存在於案件資料中')
 
-    case_id_tag = make_case_id(case.case_id, date_str)
+    case_id_tag = make_case_id(case.case_id, date_str, data_version=case.data_version)
 
     layers = survey.build_layers(case, parcel_keys=parcel_keys, include_refs=include_refs,
                                   case_id_tag=case_id_tag)

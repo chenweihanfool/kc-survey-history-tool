@@ -1,13 +1,21 @@
 """版本與更新來源設定。"""
 
 APP_TITLE = '複丈歷史資料匯出工具'
-APP_VERSION = '1.4.0'
+APP_VERSION = '1.4.1'
 
 GITHUB_OWNER = 'chenweihanfool'
 GITHUB_REPO = 'kc-survey-history-tool'
 
 # 更新歷程（新版在前），供 GUI 點選版本號時顯示。
 CHANGELOG = [
+    {
+        'version': '1.4.1', 'date': '2026-08-19',
+        'notes': [
+            'CASE_ID 加上新舊圖標記：舊圖輸出的 CASE_ID 會加上「-舊」後綴（例如'
+            'KC0395-115-08-20-舊），新圖不變。修正同一案件同一天先後輸出新圖與舊圖時，'
+            '兩者因 CASE_ID 相同而互相覆蓋/混入彙整 GPKG 的問題，現在可以同時並存',
+        ],
+    },
     {
         'version': '1.4.0', 'date': '2026-08-19',
         'notes': [

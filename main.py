@@ -401,7 +401,7 @@ class App(tk.Tk):
             return
 
         scope_desc = f'指定地號（{len(parcel_keys)} 筆）' if parcel_keys is not None else '全部地號'
-        case_id_preview = pipeline.make_case_id(self.case.case_id, date_str)
+        case_id_preview = pipeline.make_case_id(self.case.case_id, date_str, data_version=self.case.data_version)
         gpkg_note = (f'即將把資料寫入彙整 GPKG：\n{hist_dir}\\{pipeline.MASTER_GPKG_NAME}\n'
                      f'（案件標記：{case_id_preview}；若已有相同標記的舊資料會先取代）')
         if qgz_path:
