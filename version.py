@@ -1,13 +1,24 @@
 """版本與更新來源設定。"""
 
 APP_TITLE = '複丈歷史資料匯出工具'
-APP_VERSION = '1.3.0'
+APP_VERSION = '1.3.1'
 
 GITHUB_OWNER = 'chenweihanfool'
 GITHUB_REPO = 'kc-survey-history-tool'
 
 # 更新歷程（新版在前），供 GUI 點選版本號時顯示。
 CHANGELOG = [
+    {
+        'version': '1.3.1', 'date': '2026-08-19',
+        'notes': [
+            '修正自動更新偶爾出現「Failed to load Python DLL」的問題：下載新版時嚴格比對'
+            'HTTP 回應大小與 GitHub Release 記錄的檔案大小，任何不符就中止更新，避免用'
+            '下載不完整/損毀的執行檔覆蓋掉正在運作的舊版',
+            '取代執行檔前先備份成「原檔名.old.exe」，新版若無法啟動可手動改回備份檔復原',
+            '下載暫存檔改放到跟執行檔同一個磁碟機，取代時用同磁碟快速搬移，避免跨磁碟'
+            '複製途中被防毒軟體或網路磁碟同步干擾而損毀',
+        ],
+    },
     {
         'version': '1.3.0', 'date': '2026-08-19',
         'notes': [

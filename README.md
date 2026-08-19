@@ -37,8 +37,13 @@
 
 - 檢查失敗（沒有網路等）會安靜略過，照常開啟目前版本，不會卡住。
 - 僅打包為 exe 執行時才會自我更新；以原始碼 `python main.py` 執行只會記錄有新版可用。
-- 發布新版：在 [version.py](version.py) 調整 `APP_VERSION`，打包後以該版本號建立 GitHub Release
-  並附上 exe 檔案即可（release 的 `.exe` 附件檔名不影響更新邏輯，只要副檔名是 `.exe` 且是該 release 下第一個即可）。
+- 下載新版時會嚴格比對檔案大小（HTTP 回應大小 + GitHub Release 記錄的大小），任何一個對不上
+  就中止更新，避免用下載不完整的執行檔覆蓋掉正在運作的舊版。
+- 取代執行檔前會先備份成「原檔名.old.exe」（同目錄）；新版若無法啟動，可手動刪掉新的、
+  把 `.old.exe` 改回原檔名即可復原舊版。
+- 發布新版：在 [version.py](version.py) 調整 `APP_VERSION` 並在 `CHANGELOG` 補上該版本的更新說明
+  （會顯示在 GUI 點選版本號跳出的視窗），打包後以該版本號建立 GitHub Release 並附上 exe 檔案即可
+  （release 的 `.exe` 附件檔名不影響更新邏輯，只要副檔名是 `.exe` 且是該 release 下第一個即可）。
 
 ## 資料夾結構假設
 
