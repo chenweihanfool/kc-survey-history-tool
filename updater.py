@@ -101,7 +101,21 @@ for ($i = 0; $i -lt 30; $i++) {{
             Move-Item -Path $targetExe -Destination $backupExe -Force -ErrorAction Stop
         }}
         Move-Item -Path $newExe -Destination $targetExe -Force -ErrorAction Stop
-        Start-Process -FilePath $targetExe
+
+        # 剛寫入的檔案給防毒軟體/雲端同步軟體一點時間完成掃描，避免執行當下檔案被
+        # 暫時鎖住讀取，造成 PyInstaller onefile 解壓縮到暫存資料夾時失敗
+        # （Failed to load Python DLL / LoadLibrary 找不到指定的模組）
+        Start-Sleep -Milliseconds 2500
+
+        $proc = Start-Process -FilePath $targetExe -PassThru -ErrorAction Stop
+        Start-Sleep -Milliseconds 2000
+        if ($proc.HasExited -and $proc.ExitCode -ne 0) {{
+            # 啟動後很快就整個結束（不是卡在錯誤訊息視窗，是真的啟動失敗），
+            # 多等一下再重試一次啟動
+            Start-Sleep -Milliseconds 1500
+            Start-Process -FilePath $targetExe -ErrorAction SilentlyContinue
+        }}
+
         Remove-Item -Path $PSCommandPath -Force -ErrorAction SilentlyContinue
         exit 0
     }} catch {{

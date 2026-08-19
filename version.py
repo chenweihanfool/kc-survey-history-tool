@@ -1,13 +1,23 @@
 """版本與更新來源設定。"""
 
 APP_TITLE = '複丈歷史資料匯出工具'
-APP_VERSION = '1.3.1'
+APP_VERSION = '1.3.2'
 
 GITHUB_OWNER = 'chenweihanfool'
 GITHUB_REPO = 'kc-survey-history-tool'
 
 # 更新歷程（新版在前），供 GUI 點選版本號時顯示。
 CHANGELOG = [
+    {
+        'version': '1.3.2', 'date': '2026-08-19',
+        'notes': [
+            'v1.3.1 的下載完整性修正沒能解決「Failed to load Python DLL」的問題（使用者實測仍會發生），'
+            '研判是防毒軟體／雲端同步軟體在檔案剛寫入的瞬間掃描鎖住，導致 PyInstaller onefile 執行檔'
+            '啟動時解壓縮到暫存資料夾失敗，跟檔案本身完不完整無關',
+            '取代執行檔後，啟動新版前先等待約 2.5 秒讓防毒/同步軟體完成掃描，降低搶跑機率',
+            '啟動後偵測到新程序極快就整個結束（非卡在錯誤訊息視窗）會自動重試啟動一次',
+        ],
+    },
     {
         'version': '1.3.1', 'date': '2026-08-19',
         'notes': [
