@@ -97,31 +97,40 @@ def load_case(folder):
     d14 = read_dbf_records(_dbf_path(folder, base_name, 'D14'))
     d2c = _read_opt(folder, base_name, 'D2C')
     use_new_pts = len(d2c) > 0
-    pt_records = d2c if use_new_pts else d14
 
     main_pts, sub_pts, main_rows, sub_rows = {}, {}, {}, {}
-    for r in pt_records:
-        x, y = _to_float(r.get('COT_X')), _to_float(r.get('COT_Y'))
-        if x is None or y is None:
-            continue
-        ref = (r.get('COT_REF') or '0').strip()
-        num = r.get('COT_NUMBER')
-        if num is None or num == '':
-            continue
-        try:
-            num_key = _norm_key(num)
-        except ValueError:
-            continue
-        if ref in ('0', ''):
-            main_pts[num_key] = (x, y)
-            main_rows[num_key] = r
-        else:
-            ref_i = _to_int(ref)
-            if ref_i is None:
+
+    def _ingest_points(records):
+        for r in records:
+            x, y = _to_float(r.get('COT_X')), _to_float(r.get('COT_Y'))
+            if x is None or y is None:
                 continue
-            sub_key = f'{num_key}.{ref_i}'
-            sub_pts[sub_key] = (x, y)
-            sub_rows[sub_key] = r
+            ref = (r.get('COT_REF') or '0').strip()
+            num = r.get('COT_NUMBER')
+            if num is None or num == '':
+                continue
+            try:
+                num_key = _norm_key(num)
+            except ValueError:
+                continue
+            if ref in ('0', ''):
+                main_pts[num_key] = (x, y)
+                main_rows[num_key] = r
+            else:
+                ref_i = _to_int(ref)
+                if ref_i is None:
+                    continue
+                sub_key = f'{num_key}.{ref_i}'
+                sub_pts[sub_key] = (x, y)
+                sub_rows[sub_key] = r
+
+    # 先讀 D14 當底，D2C（若有）疊加覆蓋同號點位。不能直接「有 D2C 就整個換掉 D14」——
+    # 實測發現有案件的 D2C 只含主點（COT_REF=0），不含 D14 既有的参考點/補點座標，
+    # 若整個換掉會導致 D29 参考線用小數點編碼查找端點時全部查不到、退回連到錯誤的
+    # 主點座標，畫出來的参考線會整個打結交叉（跟正確結果完全不符）。
+    _ingest_points(d14)
+    if use_new_pts:
+        _ingest_points(d2c)
 
     d21 = read_dbf_records(_dbf_path(folder, base_name, 'D21')) if os.path.exists(_dbf_path(folder, base_name, 'D21')) else []
     d2d = _read_opt(folder, base_name, 'D2D')
@@ -231,19 +240,19 @@ def _parcel_point_id_set_multi(case: CaseData, keys):
 
 
 def _lookup_ref_point(case: CaseData, key_str):
+    """查找 D29 参考線端點座標。小數點編碼（如 '211.80'）只能對應到 case.sub_pts 裡
+    完全相同的參考點，找不到就回傳 None（讓該線段被跳過），不可退回連到小數點前的
+    主點座標——那是完全不同的實際位置，退回去會畫出跟正確結果不符、整片交叉打結的
+    錯誤線段（曾在 FG0518 案件實測發現這個問題）。"""
     key_str = (key_str or '').strip()
     if not key_str or key_str == '0':
         return None
     if '.' in key_str:
         base, sub = key_str.split('.', 1)
         base_i, sub_i = _to_int(base), _to_int(sub)
-        if base_i is None:
+        if base_i is None or not sub_i:
             return None
-        if sub_i:
-            k = f'{base_i}.{sub_i}'
-            if k in case.sub_pts:
-                return case.sub_pts[k]
-        return case.main_pts.get(str(base_i))
+        return case.sub_pts.get(f'{base_i}.{sub_i}')
     v = _to_int(key_str)
     if v is None:
         return None
