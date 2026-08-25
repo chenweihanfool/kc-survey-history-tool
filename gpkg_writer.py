@@ -92,13 +92,26 @@ def _ensure_gpkg_base(cur):
         PRIMARY KEY (table_name, column_name))''')
 
 
+def _migrate_columns(cur, table_name, attrs):
+    """為已存在的資料表補上目前 attrs 裡缺少的欄位（ALTER TABLE ADD COLUMN）。
+    彙整 GPKG 是長期持續累積使用的檔案，程式版本更新後若圖層新增了屬性欄位
+    （例如補點的 STATE），既有資料表不會自動有這個欄位，需要在寫入前補齊，
+    否則後續 INSERT 會因為欄位數對不上而失敗。"""
+    cur.execute(f'PRAGMA table_info("{table_name}")')
+    existing_cols = {row[1] for row in cur.fetchall()}
+    for (col_name, col_type) in attrs:
+        if col_name not in existing_cols:
+            cur.execute(f'ALTER TABLE "{table_name}" ADD COLUMN "{col_name}" {col_type}')
+
+
 def upsert_gpkg(out_path, layer_defs, case_id):
     """開啟既有 GeoPackage（不存在則建立），把各圖層資料寫入固定名稱的資料表，用於彙整
     多個案件到同一個持續累積的 GPKG 檔，而不是每次案件都產生新檔案／新圖層。
 
     - 資料表不存在：建立資料表並註冊到 gpkg_contents / gpkg_geometry_columns。
-    - 資料表已存在：先刪除 CASE_ID = case_id 的舊資料（同案號重跑時取代而非累加重複），
-      再插入這次的新資料，並將 gpkg_contents 的範圍與既有範圍取聯集。
+    - 資料表已存在：先補齊缺少的欄位（見 _migrate_columns），再刪除 CASE_ID = case_id
+      的舊資料（同案號重跑時取代而非累加重複），最後插入這次的新資料，並將
+      gpkg_contents 的範圍與既有範圍取聯集。
 
     只處理 rows 非空的圖層。回傳實際寫入（新建或更新）的圖層名稱清單。
     """
@@ -126,8 +139,10 @@ def upsert_gpkg(out_path, layer_defs, case_id):
                         (name, 'features', name, name, now, None, None, None, None, SRS_ID))
             cur.execute('INSERT INTO gpkg_geometry_columns VALUES (?,?,?,?,?,?)',
                         (name, 'geom', layer['geom_type'], SRS_ID, 0, 0))
-        elif case_id is not None:
-            cur.execute(f'DELETE FROM "{name}" WHERE CASE_ID = ?', (case_id,))
+        else:
+            _migrate_columns(cur, name, attrs)
+            if case_id is not None:
+                cur.execute(f'DELETE FROM "{name}" WHERE CASE_ID = ?', (case_id,))
 
         col_names = ','.join(f'"{n}"' for (n, _t) in attrs)
         placeholders = ','.join('?' for _ in attrs)

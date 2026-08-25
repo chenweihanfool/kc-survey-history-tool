@@ -338,12 +338,16 @@ def build_layers(case: CaseData, parcel_keys=None, include_refs=True, case_id_ta
                 '_bbox': (x, y, x, y),
                 'CTL_NAME': name, 'CTL_Y': y, 'CTL_X': x,
                 'CTL_LEVEL': (r.get('CTL_LEVEL') or '').strip(),
+                'STATE': '?',  # 現況狀態：0=良好 ?=未知 x=已回報找不到，預設未知，待現場查核後手動更新
                 'CASE_ID': case_id_tag,
             })
     layers.append({
         'name': '補點', 'geom_type': 'POINT',
+        # STATE 型別帶 DEFAULT '?'：既有資料表用 ALTER TABLE 補這個欄位時，SQLite 會把
+        # 既有每一列的 STATE 一併回填成 '?'（而不是 NULL），QGIS 依現況分類顯示的規則
+        # （0=良好 ?=未知 x=已回報找不到）才會把舊資料也正確歸類到「未知」，不會漏顯示。
         'attrs': [('CTL_NAME', 'TEXT'), ('CTL_Y', 'REAL'), ('CTL_X', 'REAL'), ('CTL_LEVEL', 'TEXT'),
-                  CASE_ID_ATTR],
+                  ('STATE', "TEXT DEFAULT '?'"), CASE_ID_ATTR],
         'rows': supp_rows,
     })
 

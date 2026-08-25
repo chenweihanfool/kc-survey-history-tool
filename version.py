@@ -1,13 +1,25 @@
 """版本與更新來源設定。"""
 
 APP_TITLE = '複丈歷史資料匯出工具'
-APP_VERSION = '1.4.1'
+APP_VERSION = '1.4.2'
 
 GITHUB_OWNER = 'chenweihanfool'
 GITHUB_REPO = 'kc-survey-history-tool'
 
 # 更新歷程（新版在前），供 GUI 點選版本號時顯示。
 CHANGELOG = [
+    {
+        'version': '1.4.2', 'date': '2026-08-19',
+        'notes': [
+            '補點圖層新增 STATE 屬性欄位（0=良好 ?=未知 x=已回報找不到，預設 ?），'
+            '讓 QGIS 依現況狀態分類顯示補點的樣式設定能正常運作',
+            'gpkg_writer 新增資料表欄位自動遷移：彙整 GPKG 是長期持續累積使用的檔案，'
+            '既有資料表若缺少新版程式新增的欄位（例如這次的 STATE），寫入前會自動用'
+            'ALTER TABLE 補齊，不影響既有資料，不需要使用者手動處理或砍掉重建',
+            '欄位遷移時既有補點資料的 STATE 會一併回填為預設值 ?（未知），而不是空值，'
+            '這樣舊資料在 QGIS 依現況狀態分類顯示時也會正確歸類，不會漏顯示',
+        ],
+    },
     {
         'version': '1.4.1', 'date': '2026-08-19',
         'notes': [
