@@ -68,10 +68,22 @@ function initVersion() {
 async function chooseFolder() {
   if (!hasFsa()) { $('folderInp').click(); return; }
   let handle;
+  const t0 = performance.now();
   try {
     handle = await window.showDirectoryPicker({ mode: 'readwrite' });
   } catch (e) {
-    if (e && e.name === 'AbortError') { setStatus('已取消選擇資料夾'); return; } // 使用者按了取消
+    if (e && e.name === 'AbortError') {
+      // 人不可能在 0.5 秒內看完視窗並按取消：瞬間中止代表這個瀏覽器有 API 卻沒接上選擇視窗
+      // （部分 Chromium 衍生瀏覽器如此），直接改走相容模式，不要讓使用者面對沒反應的按鈕
+      if (performance.now() - t0 < 500) {
+        log('此瀏覽器的資料夾選擇視窗無法使用，已自動改用相容模式（只能讀取，結果以下載方式提供）');
+        setStatus('已改用相容模式');
+        $('browserNotice').classList.remove('hidden');
+        $('folderInp').click();
+        return;
+      }
+      setStatus('已取消選擇資料夾'); return; // 使用者按了取消
+    }
     const why = `${e && e.name ? e.name : 'Error'}：${e && e.message ? e.message : e}`;
     log(`❌ 無法開啟資料夾選擇視窗（${why}）`);
     setStatus('無法開啟資料夾選擇視窗');
