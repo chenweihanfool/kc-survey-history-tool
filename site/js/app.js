@@ -66,13 +66,25 @@ function initVersion() {
 
 // ── 步驟 1：資料夾與案件 ─────────────────────────────────────
 async function chooseFolder() {
-  if (hasFsa()) {
-    let handle;
-    try { handle = await window.showDirectoryPicker({ mode: 'readwrite' }); } catch (_e) { return; } // 使用者取消
+  if (!hasFsa()) { $('folderInp').click(); return; }
+  let handle;
+  try {
+    handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+  } catch (e) {
+    if (e && e.name === 'AbortError') { setStatus('已取消選擇資料夾'); return; } // 使用者按了取消
+    const why = `${e && e.name ? e.name : 'Error'}：${e && e.message ? e.message : e}`;
+    log(`❌ 無法開啟資料夾選擇視窗（${why}）`);
+    setStatus('無法開啟資料夾選擇視窗');
+    alert(`無法開啟資料夾選擇視窗。\n\n${why}\n\n可以改按「相容模式」選資料夾（只能讀取，結果會以下載方式提供）。`);
+    return;
+  }
+  try {
     await saveHandle('root', handle);
     await openWorkspace(new FsaWorkspace(handle));
-  } else {
-    $('folderInp').click();
+  } catch (e) {
+    log(`❌ 讀取資料夾失敗：${e.message}`);
+    setStatus('讀取失敗');
+    alert(`讀取資料夾失敗：${e.message}`);
   }
 }
 
@@ -493,17 +505,22 @@ async function onRun() {
 }
 
 // ── 初始化 ───────────────────────────────────────────────────
-function init() {
-  initVersion();
-  initParams();
-  $('inDate').value = today();
-  if (!hasFsa()) $('browserNotice').classList.remove('hidden');
+function safely(name, fn) {
+  try { fn(); } catch (e) { log(`❌ 初始化「${name}」失敗：${e.message}`); console.error(e); }
+}
 
+function init() {
+  // 先綁定主要按鈕，確保後面任何步驟出錯都不會讓按鈕沒反應
   $('btnPick').onclick = chooseFolder;
+  $('btnCompat').onclick = () => $('folderInp').click();
   $('folderInp').onchange = async (e) => {
     const files = Array.from(e.target.files); e.target.value = ''; // FileList 是活的，清空 value 前先複製
     if (files.length) await openWorkspace(new FilesWorkspace(files));
   };
+  safely('版本', initVersion);
+  safely('轉換參數', initParams);
+  safely('日期', () => { $('inDate').value = today(); });
+  if (!hasFsa()) $('browserNotice').classList.remove('hidden');
   $('selCase').onchange = () => {
     const entry = st.found.cases.find((x) => x.name === $('selCase').value);
     if (entry) selectCase(entry);
@@ -539,9 +556,13 @@ function init() {
       b.textContent = `↻ 開啟上次的資料夾（${h.name}）`;
       b.classList.remove('hidden');
       b.onclick = openLast;
-    });
+    }).catch(() => {});
   }
-  updateCrsWarn();
+  safely('座標系', updateCrsWarn);
 }
+
+// 任何沒被接住的錯誤都顯示在「紀錄」區，不要讓使用者面對沒反應的畫面
+window.addEventListener('error', (e) => log(`❌ 發生錯誤：${e.message}`));
+window.addEventListener('unhandledrejection', (e) => log(`❌ 發生錯誤：${(e.reason && e.reason.message) || e.reason}`));
 
 init();
