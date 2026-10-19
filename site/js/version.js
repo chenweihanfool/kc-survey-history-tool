@@ -1,12 +1,21 @@
 // 版本與更新來源設定。
 export const APP_TITLE = '複丈歷史資料匯出工具';
-export const APP_VERSION = '2.0.0';
+export const APP_VERSION = '2.0.1';
 
 export const GITHUB_OWNER = 'chenweihanfool';
 export const GITHUB_REPO = 'kc-survey-history-tool';
 
 // 更新歷程（新版在前），供點選版本號時顯示。發布新版：調整 APP_VERSION、補上這裡的說明，再建立同版號的 GitHub Release。
 export const CHANGELOG = [
+  {
+    "version": "2.0.1",
+    "date": "2026-10-19",
+    "notes": [
+      "修正「選擇資料夾」按下去沒有任何反應的問題：資料夾選擇視窗失敗時，原本被當成「使用者取消」而靜默略過；現在取消會顯示「已取消」，其他失敗會顯示錯誤原因（名稱與訊息）並寫入紀錄",
+      "新增「相容模式…」按鈕：選不到資料夾時可改用瀏覽器的一般資料夾選擇（只能讀取，結果以下載方式提供）；若資料夾選擇視窗瞬間被中止（部分 Chromium 衍生瀏覽器，例如 Comet，有此 API 卻沒接上視窗），會自動改用相容模式",
+      "初始化改為先綁定主要按鈕，任何一步出錯都不會讓按鈕失效；沒被接住的錯誤一律顯示在「紀錄」區"
+    ]
+  },
   {
     "version": "2.0.0",
     "date": "2026-10-19",
