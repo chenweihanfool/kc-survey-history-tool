@@ -170,23 +170,46 @@ export function convertCase(caseData, fit, { exact = true } = {}) {
   return stats;
 }
 
-/** 轉換前檢查：回傳警告字串陣列（資料看起來已是 TWD97、或離控制點太遠）。 */
+/**
+ * 轉換前檢查。回傳 {warnings:[...], info:[...]}。
+ *
+ * 判斷「案件是 TWD67 還是 TWD97」只採用有憑據的證據：案件裡有沒有點與控制點的公告座標「完全相同」
+ * （±0.5 mm）。TWD67 與 TWD97 只差約 830 m，而控制點與案件的分布常常比這個差距大，
+ * 所以不能用「案件重心比較接近哪一組座標」這類距離推測（KC0350 實測會誤判）。
+ *  - 有點吻合控制點的 TWD67 座標 → 確認是 TWD67（info）
+ *  - 只有點吻合 TWD97 座標、沒有任何點吻合 TWD67 座標 → 警告：資料很可能已經是 TWD97
+ *  - 都沒有吻合 → 沒有憑據，不下判斷
+ * 另外：案件範圍離控制點範圍太遠（> 5 km）會警告，並以 info 回報落在控制點範圍內的點數。
+ */
 export function sanityCheck(caseData, pairs) {
-  const warns = [];
+  const warnings = []; const info = [];
   const pts = [...caseData.mainPts.values()];
-  if (pts.length === 0 || pairs.length === 0) return warns;
-  const split = (a, b) => (isNorthing(a) ? [b, a] : [a, b]); // -> [e, n]
-  const es = []; const ns = [];
-  for (const [a, b] of pts) { const [e, n] = split(a, b); es.push(e); ns.push(n); }
-  const ce = mean(es); const cn = mean(ns);
-  const d67 = Math.hypot(ce - mean(pairs.map((p) => p.e67)), cn - mean(pairs.map((p) => p.n67)));
-  const d97 = Math.hypot(ce - mean(pairs.map((p) => p.e97)), cn - mean(pairs.map((p) => p.n97)));
-  if (d67 > 20000) {
-    warns.push(`案件位置離這組參數的控制點約 ${(d67 / 1000).toFixed(1)} km，可能選錯參數`);
-  } else if (d97 + 100 < d67) {
-    warns.push(`案件座標比較接近這組參數的 TWD97 座標（差 ${d97.toFixed(0)} m，TWD67 則差 ${d67.toFixed(0)} m），資料可能已經是 TWD97，請確認案件座標系`);
+  if (pts.length === 0 || pairs.length === 0) return { warnings, info };
+
+  const en = pts.map(([a, b]) => (isNorthing(a) ? [b, a] : [a, b])); // -> [e, n]
+  const key = (e, n) => `${Math.round(e * 1000)},${Math.round(n * 1000)}`;
+  const have = new Set(en.map(([e, n]) => key(e, n)));
+  const m67 = pairs.filter((p) => have.has(key(p.e67, p.n67))).length;
+  const m97 = pairs.filter((p) => have.has(key(p.e97, p.n97))).length;
+  if (m67 > 0) {
+    info.push(`有 ${m67} 個點與這組參數的控制點 TWD67 座標完全相同，確認案件是 TWD67`);
+  } else if (m97 > 0) {
+    warnings.push(`有 ${m97} 個點與這組參數的控制點 TWD97 座標完全相同（TWD67 座標則沒有），資料很可能已經是 TWD97，請確認案件座標系`);
   }
-  return warns;
+
+  const range = (a) => [Math.min(...a), Math.max(...a)];
+  const [cE0, cE1] = range(en.map((p) => p[0])); const [cN0, cN1] = range(en.map((p) => p[1]));
+  const [kE0, kE1] = range(pairs.map((p) => p.e67)); const [kN0, kN1] = range(pairs.map((p) => p.n67));
+  const gap = Math.hypot(Math.max(0, cE0 - kE1, kE0 - cE1), Math.max(0, cN0 - kN1, kN0 - cN1));
+  if (gap > 5000) {
+    warnings.push(`案件範圍離這組參數的控制點範圍約 ${(gap / 1000).toFixed(1)} km，可能選錯參數`);
+  } else {
+    const inside = en.filter(([e, n]) => e >= kE0 - 1000 && e <= kE1 + 1000 && n >= kN0 - 1000 && n <= kN1 + 1000).length;
+    info.push(inside === en.length
+      ? `案件的 ${en.length} 個界址點都在控制點範圍內（±1 km）`
+      : `案件的 ${en.length} 個界址點中 ${inside} 個在控制點範圍內（±1 km），其餘為外插，精度較差`);
+  }
+  return { warnings, info };
 }
 
 // ── 參數庫（localStorage；失敗時退回記憶體）─────────────────

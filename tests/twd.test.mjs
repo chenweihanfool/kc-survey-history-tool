@@ -112,14 +112,37 @@ test('convertCase：座標不像 TWD67 時丟錯；外插會警告', () => {
   assert.equal(s.outside, 1); assert.equal(s.warnings.length, 1);
 });
 
-test('sanityCheck：已是 TWD97 的資料會被警告', () => {
+test('sanityCheck：以「吻合的控制點」判斷座標系，不用距離推測', () => {
   const { pairs } = parseInp(inpText(CTRL));
-  const near97 = { mainPts: new Map(pairs.map((p) => [p.name, [p.e97, p.n97]])) };
-  const near67 = { mainPts: new Map(pairs.map((p) => [p.name, [p.e67, p.n67]])) };
-  assert.equal(sanityCheck(near67, pairs).length, 0);
-  assert.match(sanityCheck(near97, pairs)[0], /已經是 TWD97/);
-  const far = { mainPts: new Map([['1', [300000, 2600000]]]) };
-  assert.match(sanityCheck(far, pairs)[0], /離這組參數/);
+  const mk = (list) => ({ mainPts: new Map(list.map((xy, i) => [String(i), xy])) });
+  // 案件含控制點的 TWD67 座標 → 確認 TWD67，無警告
+  const r67 = sanityCheck(mk(pairs.map((p) => [p.e67, p.n67])), pairs);
+  assert.deepEqual(r67.warnings, []);
+  assert.match(r67.info[0], /確認案件是 TWD67/);
+  // 案件含控制點的 TWD97 座標、沒有 TWD67 座標 → 警告已是 TWD97
+  const r97 = sanityCheck(mk(pairs.map((p) => [p.e97, p.n97])), pairs);
+  assert.match(r97.warnings[0], /已經是 TWD97/);
+  // 欄位順序（北,東）也要認得
+  assert.match(sanityCheck(mk(pairs.map((p) => [p.n97, p.e97])), pairs).warnings[0], /已經是 TWD97/);
+});
+
+test('sanityCheck：沒有吻合的點就不下判斷（KC0350 回歸：案件在控制點附近但無任何點吻合，不可誤報已是 TWD97）', () => {
+  const { pairs } = parseInp(inpText(CTRL));
+  // 控制點分布 ~2 km，TWD67/97 只差 ~830 m：案件重心比較接近 97 重心也不代表是 97
+  const kE = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  const c97 = [kE(pairs.map((p) => p.e97)) + 300, kE(pairs.map((p) => p.n97)) + 300];
+  const near97 = { mainPts: new Map([['1', c97], ['2', [c97[0] + 200, c97[1] + 150]], ['3', [c97[0] - 100, c97[1] - 80]]]) };
+  const r = sanityCheck(near97, pairs);
+  assert.deepEqual(r.warnings, []);
+  assert.ok(r.info.some((m) => /控制點範圍內/.test(m)));
+});
+
+test('sanityCheck：案件離控制點太遠會警告；部分在範圍外會註明外插', () => {
+  const { pairs } = parseInp(inpText(CTRL));
+  assert.match(sanityCheck({ mainPts: new Map([['1', [300000, 2600000]]]) }, pairs).warnings[0], /可能選錯參數/);
+  const half = sanityCheck({ mainPts: new Map([['1', [217000, 2709000]], ['2', [217000 + 2500, 2709000]]]) }, pairs);
+  assert.deepEqual(half.warnings, []);
+  assert.match(half.info.at(-1), /其餘為外插/);
 });
 
 test('ParamStore：新增/更新/選擇/刪除/匯出匯入', () => {

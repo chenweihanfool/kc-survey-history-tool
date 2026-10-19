@@ -47,20 +47,75 @@ async function readText(file) {
 }
 
 // ── 版本／更新 ──────────────────────────────────────────────
-function initVersion() {
-  document.title = `${APP_TITLE} v${APP_VERSION}`;
-  $('ver').textContent = `v${APP_VERSION}（點選查看更新歷程）`;
-  $('ver').onclick = () => {
-    $('verBody').innerHTML = CHANGELOG.map((e) => `<h3>v${e.version}　${e.date}</h3><ul>${
-      e.notes.map((n) => `<li>${n.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</li>`).join('')}</ul>`).join('');
-    $('dlgVer').showModal();
+const TYPE_META = { major: '重大', minor: '新功能', patch: '修正' };
+const show = (el, on) => el.classList.toggle('show', !!on);
+
+function mk(tag, cls, text) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+/** 更新歷程：近滿版時間軸（左版本與日期、中軸線與節點、右一行標題，點開看內容）。 */
+function initChangelog() {
+  const ui = { query: '', type: 'all', open: new Set() };
+  const list = $('verList');
+
+  const visible = () => {
+    const q = ui.query.trim().toLowerCase();
+    return CHANGELOG.filter((e) => (ui.type === 'all' || e.type === ui.type)
+      && (!q || `v${e.version}`.includes(q) || e.title.toLowerCase().includes(q) || e.notes.some((n) => n.toLowerCase().includes(q))));
+  };
+
+  const render = () => {
+    const entries = visible();
+    $('verCount').textContent = `共 ${CHANGELOG.length} 版，目前 v${APP_VERSION}`;
+    $('verToggle').textContent = entries.length && entries.every((e) => ui.open.has(e.version)) ? '全部收合' : '全部展開';
+    list.replaceChildren();
+    if (entries.length === 0) { list.append(mk('li', 'vempty', '沒有符合的更新紀錄')); return; }
+    for (const e of entries) {
+      const open = ui.open.has(e.version);
+      const li = mk('li', `vitem t-${e.type}${open ? ' open' : ''}`);
+      const v = mk('div', 'v'); v.append(mk('b', '', `v${e.version}`), mk('span', '', e.date));
+      const axis = mk('div', 'axis'); axis.append(mk('span', 'dot'));
+      const body = mk('div', 'body');
+      const head = mk('button', 'head'); head.setAttribute('aria-expanded', String(open));
+      head.append(mk('span', 'badge', TYPE_META[e.type]), mk('span', 'ht', e.title), mk('span', 'chev', '⌄'));
+      head.onclick = () => { if (ui.open.has(e.version)) ui.open.delete(e.version); else ui.open.add(e.version); render(); };
+      body.append(head);
+      if (open) { const ul = mk('ul'); for (const n of e.notes) ul.append(mk('li', '', n)); body.append(ul); }
+      li.append(v, axis, body);
+      list.append(li);
+    }
+  };
+
+  $('verQuery').oninput = (ev) => { ui.query = ev.target.value; render(); };
+  $('verFilter').onclick = (ev) => {
+    const t = ev.target.closest('button'); if (!t) return;
+    ui.type = t.dataset.t;
+    for (const b of $('verFilter').children) b.classList.toggle('on', b === t);
+    render();
+  };
+  $('verToggle').onclick = () => {
+    const entries = visible();
+    if (entries.every((e) => ui.open.has(e.version))) ui.open.clear(); else for (const e of entries) ui.open.add(e.version);
+    render();
   };
   $('verClose').onclick = () => $('dlgVer').close();
+  $('dlgVer').addEventListener('click', (ev) => { if (ev.target === $('dlgVer')) $('dlgVer').close(); }); // 點背景關閉
+  $('ver').onclick = () => { ui.query = ''; $('verQuery').value = ''; ui.open = new Set([CHANGELOG[0].version]); render(); $('dlgVer').showModal(); };
+}
+
+function initVersion() {
+  document.title = `${APP_TITLE} v${APP_VERSION}`;
+  $('ver').textContent = `v${APP_VERSION} · 更新歷程`;
+  initChangelog();
   checkForUpdate(APP_VERSION).then((u) => {
     if (!u) return;
     $('updateVer').textContent = u.version;
     $('updateLink').href = u.assetUrl || u.url;
-    $('updateBanner').style.display = 'block';
+    show($('updateBanner'), true);
   });
 }
 
@@ -78,7 +133,7 @@ async function chooseFolder() {
       if (performance.now() - t0 < 500) {
         log('此瀏覽器的資料夾選擇視窗無法使用，已自動改用相容模式（只能讀取，結果以下載方式提供）');
         setStatus('已改用相容模式');
-        $('browserNotice').classList.remove('hidden');
+        show($('browserNotice'), true);
         $('folderInp').click();
         return;
       }
@@ -119,7 +174,9 @@ async function openWorkspace(ws) {
     setStatus('讀取失敗'); alert(`無法讀取資料夾：${e.message}`); return;
   }
   $('rootLabel').textContent = `${ws.name}　${st.found.mode === 'case' ? '（單一案件資料夾）' : '（專案根目錄）'}`;
-  $('browserNotice').classList.toggle('hidden', ws.canWrite);
+  show($('browserNotice'), !ws.canWrite);
+  await detectGpkg();
+  renderTree();
 
   const sel = $('selCase');
   sel.innerHTML = '';
@@ -128,6 +185,7 @@ async function openWorkspace(ws) {
   if (st.found.cases.length === 0) {
     $('caseInfo').textContent = '';
     setStatus('找不到案件');
+    renderTree();
     alert('在這個資料夾裡找不到任何案件（需要有 XX####.D14 檔案的資料夾）。\n請選專案根目錄或單一案件資料夾。');
     return;
   }
@@ -136,7 +194,54 @@ async function openWorkspace(ws) {
   await selectCase(st.found.cases[0]);
 }
 
-function renderQgz() {
+/** 彙整 GPKG 是否已存在（決定示意圖顯示「已存在，會累積」或「第一次輸出時建立」）。 */
+async function detectGpkg() {
+  st.gpkgExists = null;
+  const q = st.found && st.found.qgis;
+  if (!q) return;
+  try {
+    const list = await st.ws.listDir([...q.dirParts, '複丈歷史']);
+    st.gpkgExists = list.some((e) => e.kind === 'file' && e.name === MASTER_GPKG_NAME);
+  } catch (_e) { st.gpkgExists = false; }
+}
+
+/** 建議的資料夾結構示意圖；選了資料夾後，同一張圖會標示每一項偵測到沒有。 */
+function renderTree() {
+  const f = st.found; const loaded = !!f; const isRoot = loaded && f.mode === 'root';
+  const q = f && f.qgis; const nCases = loaded ? f.cases.length : 0;
+  const cur = (st.caseEntry && st.caseEntry.name) || (loaded && f.cases[0] && f.cases[0].name) || 'KC0350';
+  const OK = (t) => ['ok', `✓ ${t}`]; const NO = (t) => ['warn', `✗ ${t}`]; const INFO = (t) => ['muted', t];
+
+  const qgzNames = st.manualQgz ? [st.manualQgz.name] : (q ? q.qgz : []);
+  const rows = [
+    { tl: '', icon: '📁', name: isRoot ? st.ws.name : '專案根目錄',
+      note: loaded ? '' : '', pick: !loaded, state: !loaded ? null : (isRoot ? OK('專案根目錄') : INFO('（你選的是單一案件資料夾）')) },
+    { tl: '├─ ', icon: '📁', name: cur, note: loaded ? '案件資料夾' : '案件資料夾：內有 KC0350.D14、.D21… 與 .inp',
+      state: !loaded ? null : OK(`${nCases} 個案件，目前選這個`) , dim: false },
+    { tl: '├─ ', icon: '📁', name: loaded ? (nCases > 1 ? `…另 ${nCases - 1} 個案件` : '（沒有其他案件）') : 'KC0351', note: loaded ? '' : '可放很多個，載入後從「案件」下拉選', dim: loaded && nCases <= 1 },
+    { tl: '└─ ', icon: '📁', name: 'QGIS', note: loaded && !isRoot ? '單選案件資料夾時，要自己指定 QGZ 與輸出資料夾' : '',
+      state: !loaded ? null : (isRoot ? (q ? OK('已找到') : NO('找不到 QGIS 資料夾')) : null) },
+    { tl: '   ├─ ', icon: '📄', name: qgzNames[0] || 'kc_ctl.qgz', note: loaded ? '' : 'QGIS 專案檔 → 自動更新（先備份成 .bak）',
+      state: !loaded ? null : (qgzNames.length ? OK(st.manualQgz ? '已另選' : `已找到${qgzNames.length > 1 ? ` ${qgzNames.length} 個` : ''}`) : NO('找不到 .qgz（可另選，或只輸出 GPKG）')) },
+    { tl: '   └─ ', icon: '📁', name: '複丈歷史', note: '' },
+    { tl: '      └─ ', icon: '🗄️', name: MASTER_GPKG_NAME, note: loaded ? '' : '輸出：第一次自動建立，之後持續累積',
+      state: !loaded ? null : (st.outDir ? OK(`輸出到 ${st.outDir.name}`) : (st.gpkgExists === true ? OK('已存在，這次會累積進去') : (q ? INFO('第一次輸出時自動建立') : INFO('輸出位置：執行時指定')))) },
+  ];
+  $('tips').classList.toggle('hidden', loaded); // 已載入就不再需要說明，省出高度給小螢幕
+  const box = $('tree');
+  box.replaceChildren();
+  for (const r of rows) {
+    const el = mk('div', `trow${r.state && r.state[0] === 'ok' ? ' hit' : ''}${r.state && r.state[0] === 'warn' ? ' miss' : ''}${r.dim ? ' muted' : ''}`);
+    el.append(mk('span', 'tl', r.tl), mk('span', '', r.icon), mk('b', '', r.name));
+    if (r.pick) el.append(mk('span', 'pick', '← 選這個（最快）'));
+    if (r.note) el.append(mk('span', 'tn', r.note));
+    if (r.state) el.append(mk('span', `ts ${r.state[0]}`, r.state[1]));
+    box.append(el);
+  }
+}
+
+function renderQgz() { renderQgzList(); renderTree(); }
+function renderQgzList() {
   const sel = $('selQgz');
   sel.innerHTML = '';
   const q = st.found && st.found.qgis;
@@ -158,9 +263,10 @@ function renderQgz() {
 
 function renderOut() {
   const hasQgis = st.found && st.found.qgis;
-  const show = !hasQgis && st.ws && st.ws.canWrite;
-  $('rowOut').classList.toggle('hidden', !show);
+  const needOut = !hasQgis && st.ws && st.ws.canWrite;
+  $('rowOut').classList.toggle('hidden', !needOut);
   $('outLabel').textContent = st.outDir ? st.outDir.name : '（尚未選擇；執行時會詢問）';
+  renderTree();
 }
 
 async function selectCase(entry) {
@@ -191,6 +297,7 @@ async function selectCase(entry) {
   $('btnRun').disabled = false;
   renderInpHint();
   updateCrsWarn();
+  renderTree();
 }
 
 // ── 地號清單 ─────────────────────────────────────────────────
@@ -236,26 +343,27 @@ function renderParamInfo() {
 }
 
 function updateCrsWarn() {
-  const box = $('crsWarn');
   const is67 = radio('crs') === '67';
   $('rowParam').classList.toggle('hidden', !is67);
   $('paramInfo').classList.toggle('hidden', !is67);
-  const msgs = [];
+  let warnings = []; let info = [];
   if (is67 && st.raw) {
     const set = store.get($('selParam').value);
-    if (set) { try { msgs.push(...sanityCheck(st.raw, ParamStore.pairsOf(set))); } catch (_e) { /* 在執行時會再報錯 */ } }
+    if (set) {
+      try { ({ warnings, info } = sanityCheck(st.raw, ParamStore.pairsOf(set))); } catch (_e) { /* 在執行時會再報錯 */ }
+    }
   }
-  box.classList.toggle('hidden', msgs.length === 0);
-  box.textContent = msgs.map((m) => `⚠ ${m}`).join('\n');
+  show($('crsWarn'), warnings.length); $('crsWarn').textContent = warnings.map((m) => `⚠ ${m}`).join('\n');
+  show($('crsInfo'), info.length); $('crsInfo').textContent = info.map((m) => `✓ ${m}`).join('\n');
 }
 
 function renderInpHint() {
   let el = $('inpHint');
   if (!el) {
-    el = document.createElement('div'); el.id = 'inpHint'; el.className = 'notice';
+    el = document.createElement('div'); el.id = 'inpHint'; el.className = 'infobox';
     $('crsWarn').after(el);
   }
-  el.classList.toggle('hidden', st.inpNames.length === 0);
+  show(el, st.inpNames.length > 0);
   if (st.inpNames.length === 0) return;
   el.innerHTML = '';
   el.append(`這個案件資料夾內有 ${st.inpNames.length} 個 INP 檔（${st.inpNames.join('、')}）。 `);
@@ -464,7 +572,7 @@ async function onRun() {
     if (!set) { alert('案件座標系選了 TWD67，請先在下拉清單選一組轉換參數（沒有的話按「管理轉換參數」匯入 INP）。'); return; }
     try {
       const fit = store.fitOf(set);
-      warns.push(...sanityCheck(st.raw, ParamStore.pairsOf(set)));
+      warns.push(...sanityCheck(st.raw, ParamStore.pairsOf(set)).warnings);
       c = cloneForConvert(st.raw);
       const stats = convertCase(c, fit, { exact: set.exact !== false });
       if (fit.note) warns.push(fit.note);
@@ -532,7 +640,8 @@ function init() {
   safely('版本', initVersion);
   safely('轉換參數', initParams);
   safely('日期', () => { $('inDate').value = today(); });
-  if (!hasFsa()) $('browserNotice').classList.remove('hidden');
+  if (!hasFsa()) show($('browserNotice'), true);
+  safely('資料夾示意圖', renderTree);
   $('selCase').onchange = () => {
     const entry = st.found.cases.find((x) => x.name === $('selCase').value);
     if (entry) selectCase(entry);
