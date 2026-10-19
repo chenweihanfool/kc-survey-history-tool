@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>複丈歷史資料匯出工具</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231a5cb8'/%3E%3Cpath d='M7 24 L12 9 L21 14 L25 7' stroke='white' stroke-width='2.5' fill='none'/%3E%3Ccircle cx='12' cy='9' r='2.5' fill='white'/%3E%3Ccircle cx='21' cy='14' r='2.5' fill='white'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f4f6f9; --card: #fff; --fg: #1d2733; --muted: #6a7686; --line: #d8dee7;
+    --accent: #1a5cb8; --accent-fg: #fff; --ok: #1f7a3a; --warn: #a15c00; --err: #b3261e;
+    --warn-bg: #fff4e0; --log-bg: #f0f3f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12171d; --card: #1b222b; --fg: #e4e9ef; --muted: #8e9aa9; --line: #2f3a47;
+      --accent: #5b9bf0; --accent-fg: #0b1522; --ok: #5fcf80; --warn: #f0b14d; --err: #ff8a80;
+      --warn-bg: #3a2c12; --log-bg: #151b22;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+  main { max-width: 820px; margin: 0 auto; padding: 16px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  h1 { font-size: 20px; margin: 0; }
+  a, .link { color: var(--accent); cursor: pointer; text-decoration: none; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
+  .card h2 { font-size: 15px; margin: 0 0 10px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0; }
+  .row > label { color: var(--muted); }
+  button { font: inherit; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.small { padding: 2px 8px; font-size: 13px; }
+  input[type=text], input[type=date], select { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); max-width: 100%; }
+  select[multiple] { width: 100%; }
+  .muted { color: var(--muted); }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
+  .banner { background: var(--warn-bg); border: 1px solid var(--warn); border-radius: 8px; padding: 8px 12px; margin: 8px 0; display: none; }
+  .notice { background: var(--warn-bg); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+  #log { background: var(--log-bg); border-radius: 6px; padding: 8px 10px; height: 200px; overflow: auto; white-space: pre-wrap; font: 13px/1.5 ui-monospace, Consolas, monospace; }
+  dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--fg); max-width: min(760px, 94vw); width: 100%; padding: 16px; }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog h2 { margin: 0 0 8px; font-size: 17px; }
+  .ver h3 { color: var(--accent); margin: 14px 0 4px; font-size: 15px; }
+  .ver ul { margin: 0; padding-left: 20px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 6px 4px; text-align: left; vertical-align: middle; }
+  th { color: var(--muted); font-weight: 600; }
+  .scroll { max-height: 55vh; overflow: auto; }
+  .hidden { display: none !important; }
+  @media (max-width: 560px) { main { padding: 10px; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>複丈歷史資料匯出工具</h1>
+    <span id="ver" class="link" title="查看更新歷程"></span>
+  </header>
+  <div id="updateBanner" class="banner">
+    發現新版本 <b id="updateVer"></b>。<button id="btnReload" class="small primary">重新載入以更新</button>
+    <a id="updateLink" target="_blank" rel="noopener">查看說明</a>
+  </div>
+  <div id="browserNotice" class="notice hidden">
+    目前瀏覽器不支援直接寫入資料夾（建議使用 Chrome 或 Edge）。仍可讀取案件並產生結果，但輸出的 GPKG／QGZ 會以「下載」方式提供，需自行放回 QGIS 資料夾。
+  </div>
+
+  <section class="card">
+    <h2>步驟 1 — 選擇資料夾</h2>
+    <div class="row">
+      <button id="btnPick" class="primary">📁 選擇資料夾…</button>
+      <button id="btnLast" class="hidden"></button>
+      <span id="rootLabel" class="muted">請選「專案根目錄」（內含案件資料夾與 QGIS 資料夾），或直接選單一案件資料夾（如 KC0391）</span>
+    </div>
+    <div class="row" id="rowCase">
+      <label for="selCase">案件：</label><select id="selCase" disabled></select>
+      <span id="caseInfo" class="ok"></span>
+    </div>
+    <div class="row">
+      <label>資料版本：</label>
+      <label><input type="radio" name="ver" value="new" checked> 新圖（現況，預設）</label>
+      <label><input type="radio" name="ver" value="old"> 舊圖</label>
+      <span class="muted">（新圖＝D14/D21/D13/D11，舊圖＝D2C/D2D/D2B）</span>
+    </div>
+    <div class="row">
+      <label for="selQgz">QGIS 專案檔：</label>
+      <select id="selQgz" disabled></select>
+      <button id="btnQgz" class="small">另選檔案…</button>
+      <span id="qgzNote" class="muted"></span>
+    </div>
+    <div class="row hidden" id="rowOut">
+      <label>GPKG 輸出資料夾：</label><span id="outLabel" class="muted"></span>
+      <button id="btnOut" class="small">選擇…</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>步驟 2 — 座標系統</h2>
+    <div class="row">
+      <label>案件座標系：</label>
+      <label><input type="radio" name="crs" value="97" checked> TWD97（預設，不轉換）</label>
+      <label><input type="radio" name="crs" value="67"> TWD67（轉成 TWD97 後輸出）</label>
+    </div>
+    <div class="row" id="rowParam">
+      <label for="selParam">轉換參數：</label>
+      <select id="selParam"></select>
+      <button id="btnParams" class="small">管理轉換參數…</button>
+    </div>
+    <div id="paramInfo" class="muted"></div>
+    <div id="crsWarn" class="notice hidden"></div>
+  </section>
+
+  <section class="card">
+    <h2>步驟 3 — 複丈日期</h2>
+    <div class="row">
+      <label for="inDate">日期（用於 CASE_ID 標記）：</label>
+      <input type="date" id="inDate">
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>步驟 4 — 輸出範圍</h2>
+    <div class="row">
+      <label><input type="radio" name="scope" value="all" checked> 全部地號</label>
+      <label><input type="radio" name="scope" value="one"> 指定地號</label>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="chkRefs" checked> 包含補點／參考點／參考線（不受地號篩選影響，全部輸出或完全不輸出）</label>
+    </div>
+    <div id="parcelBox" class="hidden">
+      <div class="row">
+        <label for="inSearch">🔍 地號搜尋：</label><input type="text" id="inSearch" size="14">
+        <button id="btnAll" class="small">全選</button><button id="btnNone" class="small">清除</button>
+        <span id="parcelInfo" class="muted"></span>
+      </div>
+      <select id="selParcel" multiple size="8"></select>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>步驟 5 — 執行</h2>
+    <div class="row">
+      <button id="btnRun" class="primary" disabled>▶ 開始輸出</button>
+      <span id="status" class="muted">請先選擇資料夾</span>
+    </div>
+    <div id="log" aria-live="polite"></div>
+  </section>
+</main>
+
+<dialog id="dlgVer"><div class="ver" id="verBody"></div><div class="row"><button id="verClose">關閉</button></div></dialog>
+
+<dialog id="dlgParams">
+  <h2>轉換參數（TWD67 → TWD97）</h2>
+  <p class="muted" style="margin:0 0 8px">
+    每個 INP 檔是一組參數，格式：<code>點名 類型 TWD97北 TWD97東 TWD67北 TWD67東</code>（前 2 欄 TWD97、後 2 欄 TWD67 公告座標；只有一組座標的點會略過）。
+    匯入後存在這個瀏覽器，之後每次只要在主畫面下拉選擇。
+  </p>
+  <div class="row">
+    <button id="pImportFiles" class="small">匯入 INP 檔（可多選）…</button>
+    <button id="pImportDir" class="small">匯入整個資料夾…</button>
+    <button id="pImportJson" class="small">匯入設定檔…</button>
+    <button id="pExportJson" class="small">匯出設定檔</button>
+  </div>
+  <div id="pMsg" class="muted"></div>
+  <div class="scroll"><table>
+    <thead><tr><th>名稱</th><th>控制點</th><th>轉換模型</th><th>殘差 RMS／最大</th><th title="座標與控制點相符的點，直接採用公告 TWD97 值">用公告值</th><th></th></tr></thead>
+    <tbody id="pBody"></tbody>
+  </table></div>
+  <div id="pDetail"></div>
+  <div class="row"><button id="pClose">關閉</button></div>
+  <input type="file" id="fileInp" accept=".inp,.txt,.INP,.TXT" multiple hidden>
+  <input type="file" id="dirInp" webkitdirectory hidden>
+  <input type="file" id="jsonInp" accept=".json,application/json" hidden>
+  <input type="file" id="folderInp" webkitdirectory hidden>
+  <input type="file" id="qgzInp" accept=".qgz" hidden>
+</dialog>
+
+<script src="vendor/sql-wasm.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
