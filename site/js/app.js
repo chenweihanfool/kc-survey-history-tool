@@ -29,7 +29,13 @@ const today = () => {
 };
 
 async function getSQL() {
-  if (!libs.SQL) libs.SQL = await window.initSqlJs({ locateFile: (f) => `vendor/${f}` });
+  if (!libs.SQL) {
+    // 單一 .html 版把 WASM 以 base64 內嵌（file:// 下瀏覽器不允許另外載入 .wasm）；開發用的 site/ 版則照檔案載入
+    const b64 = window.__SQL_WASM_B64;
+    libs.SQL = await window.initSqlJs(b64
+      ? { wasmBinary: Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0)) }
+      : { locateFile: (f) => `vendor/${f}` });
+  }
   return libs.SQL;
 }
 
@@ -50,11 +56,10 @@ function initVersion() {
     $('dlgVer').showModal();
   };
   $('verClose').onclick = () => $('dlgVer').close();
-  $('btnReload').onclick = () => location.reload();
   checkForUpdate(APP_VERSION).then((u) => {
     if (!u) return;
     $('updateVer').textContent = u.version;
-    $('updateLink').href = u.url;
+    $('updateLink').href = u.assetUrl || u.url;
     $('updateBanner').style.display = 'block';
   });
 }

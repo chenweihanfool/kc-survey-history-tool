@@ -1,0 +1,57 @@
+name: Release
+
+# master 有更新且 site/js/version.js 的 APP_VERSION 還沒有對應的 Release 時，
+# 自動跑測試、打包成單一 .html、建立 GitHub Release 並附上檔案。版號沒變就什麼都不做。
+on:
+  push:
+    branches: [master]
+    paths: ['site/**', 'scripts/**', 'package.json', 'package-lock.json', '.github/workflows/release.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Read version
+        id: ver
+        run: |
+          v=$(grep -oP "APP_VERSION = '\K[^']+" site/js/version.js)
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if release exists
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Release ${{ steps.ver.outputs.tag }} 已存在，略過"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install, test, build
+        if: steps.exists.outputs.skip != 'true'
+        run: |
+          npm ci
+          npm test
+          node scripts/build.mjs
+          node scripts/release-notes.mjs > release-notes.md
+
+      - name: Create release
+        if: steps.exists.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" dist/kc-survey-history-tool.html \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.ver.outputs.tag }}" \
+            --notes-file release-notes.md

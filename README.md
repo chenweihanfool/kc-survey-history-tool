@@ -6,12 +6,13 @@
 `KC0395-115-08-20`；舊圖加「-舊」後綴）記錄資料來源案件，所以處理過幾個案件，QGZ 裡的圖層數量永遠固定；
 要看某個案件，用 `CASE_ID` 篩選即可。
 
-**2.0.0 起改為網頁版（HTML）**：用 Chrome 或 Edge 開啟網址就能使用，不必安裝、不必下載 exe，
+**2.0.0 起改為網頁版（單一 .html 檔）**：到 [Releases](https://github.com/chenweihanfool/kc-survey-history-tool/releases)
+下載 `kc-survey-history-tool.html`，用 Chrome 或 Edge 雙擊開啟就能使用，不必安裝、不需網路，
 資料全程只在使用者自己的電腦上處理，不會上傳。原 Python／Tkinter 版移到 [`legacy/`](legacy/)，不再維護。
 
 ## 使用方式
 
-1. 開啟網頁（GitHub Pages 網址，見下方「部署」）。
+1. 雙擊開啟下載的 `kc-survey-history-tool.html`（用 Chrome 或 Edge）。
 2. **步驟 1**「選擇資料夾」：選「專案根目錄」（內含案件資料夾與 `QGIS` 資料夾），或直接選單一案件資料夾。
    - 選專案根目錄時，案件資料夾會列在「案件」下拉清單，並自動偵測 `QGIS` 資料夾與其中的 `.qgz`。
    - 第一次選擇時瀏覽器會要求授權讀寫該資料夾；下次可按「開啟上次的資料夾」。
@@ -56,6 +57,7 @@ A4    1     2709376.350  218785.951  2709581.598  217956.883
 - 案件資料夾內若本身就有 `.inp`，主畫面會提示「匯入為轉換參數」。
 
 參數存在這個瀏覽器（`localStorage`），之後每次只要在主畫面下拉選擇。同名參數匯入視為更新。
+（`file://` 開啟的單檔共用瀏覽器的 file 儲存空間；換電腦或換瀏覽器請用「匯出設定檔」帶過去。）
 
 ### 轉換方法與精度
 
@@ -68,18 +70,17 @@ A4    1     2709376.350  218785.951  2709581.598  217956.883
   點位超出控制點範圍 1 km 以上（外插）。
 - 座標的北／東欄位順序由數值大小自動判斷（北約 2,400,000～2,800,000、東約 100,000～350,000）。
 
-## 部署與自動更新（GitHub Release）
+## 發布與自動更新（GitHub Release）
 
-網頁放在 [`site/`](site/)，純靜態檔案（`sql.js`、`JSZip` 已放在 `site/vendor/`，不依賴 CDN）。
-
-- **部署**：`.github/workflows/pages.yml` 在**發布 GitHub Release** 時，跑測試後把該版本的 `site/` 部署到 GitHub Pages。
-  第一次要在 repo 的 **Settings → Pages → Build and deployment → Source** 選「**GitHub Actions**」。
-- **自動更新**：網頁啟動時查詢 `releases/latest`，若比目前載入的版本新，頁面上方顯示「重新載入以更新」。
-  使用者不必下載或安裝任何東西。
-- **發布新版**：
-  1. 在 [`site/js/version.js`](site/js/version.js) 調整 `APP_VERSION`，並在 `CHANGELOG` 補上說明（顯示在版本號的更新歷程）；
-  2. 合併後，用**同版號**（例如 `v2.0.1`）建立 GitHub Release；
-  3. Actions 會檢查 tag 與 `APP_VERSION` 是否一致、跑測試、部署。不一致就中止，不會部署。
+- **發布**：`.github/workflows/release.yml` 在 `master` 更新、且 [`site/js/version.js`](site/js/version.js) 的
+  `APP_VERSION` 還沒有對應 Release 時，自動跑測試、打包成單一 `kc-survey-history-tool.html`（所有 JS 與
+  sql.js 的 WASM 都內嵌）、建立 GitHub Release（tag `v<版號>`，說明取自 `CHANGELOG` 最新一筆）並附上檔案。
+  版號沒變就什麼都不做。
+- **發布新版的步驟**：調整 `APP_VERSION`、在 `CHANGELOG` 補上說明，合併 PR，其餘自動完成。
+- **自動更新**：頁面啟動時查詢 `releases/latest`，若比目前版本新，頁面上方會提示並提供新版 `.html` 的下載連結。
+  檔案無法自己覆蓋自己，所以由使用者用新檔取代舊檔。轉換參數存在瀏覽器的 `localStorage`，換檔通常會保留，
+  建議先在「管理轉換參數」匯出設定檔備份。
+- **本機打包**：`npm ci && node scripts/build.mjs`，輸出 `dist/kc-survey-history-tool.html`。
 
 舊版 exe（1.x）的自動更新只認 Release 附件裡的 `.exe`；網頁版 Release 不附 exe，舊版 exe 會安靜地不更新、照常使用。
 
@@ -87,7 +88,8 @@ A4    1     2709376.350  218785.951  2709581.598  217956.883
 
 ```bash
 npm test                       # 單元測試 + 與舊版 Python 輸出逐列對照（需要 python3、node 22）
-python3 -m http.server -d site # 本機預覽：http://localhost:8000
+python3 -m http.server -d site # 開發預覽（未打包版）：http://localhost:8000
+node scripts/build.mjs         # 打包單一 .html
 ```
 
 - `tests/parity.test.mjs`：用合成案件資料，確認 JS 版輸出的 GPKG 與 `legacy/` Python 版逐列一致
